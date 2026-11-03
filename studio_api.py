@@ -61,6 +61,7 @@ class VideoRenderRequest(BaseModel):
 class VideoAnimateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     prompt: str = Field(min_length=8, max_length=6000)
+    seconds_per_scene: int = Field(default=4, ge=2, le=8)
 
 
 class TaskCreate(BaseModel):
