@@ -426,18 +426,18 @@ async def animate_from_description(req: VideoAnimateRequest):
         if response.is_error:
             detail = data.get("error", {}).get("message", "Error de Claude")
             raise HTTPException(response.status_code, "Claude: " + detail[:500])
-        raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
         if not raw:
             raise ValueError("Claude respondió sin texto (stop_reason=" + str(data.get("stop_reason")) + ").")
         if data.get("stop_reason") == "max_tokens":
             raise ValueError("Claude agotó el límite de salida antes de terminar las ilustraciones. Reduce el texto del guion o inténtalo otra vez.")
         # Parse SVG documents directly; this avoids fragile JSON escaping of XML attributes and path data.
-        svg_documents = re.findall(r"<svg\\b[\\s\\S]*?</svg>", raw, flags=re.I)
+        svg_documents = re.findall(r"<svg\b[\s\S]*?</svg>", raw, flags=re.I)
         if len(svg_documents) != 4:
             raise ValueError("Claude devolvió " + str(len(svg_documents)) + " SVG completos; se necesitan 4. Inténtalo otra vez.")
         scenes = []
         for index, svg in enumerate(svg_documents):
-            title_match = re.search(r"<title[^>]*>([\\s\\S]*?)</title>", svg, flags=re.I)
+            title_match = re.search(r"<title[^>]*>([\s\S]*?)</title>", svg, flags=re.I)
             description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
             scenes.append({"description": description[:300], "svg": svg})
     except HTTPException:
