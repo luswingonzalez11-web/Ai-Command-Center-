@@ -66,8 +66,6 @@ class VideoAnimateRequest(BaseModel):
     seconds_per_scene: int = Field(default=4, ge=2, le=8)
     audio_enabled: bool = True
     audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
-    audio_enabled: bool = True
-    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
 
 
 
@@ -667,7 +665,7 @@ async def animate_from_description(req: VideoAnimateRequest):
         "video_id": video_id,
         "title": req.title,
         "scenes": len(scenes),
-        "duration_seconds": len(scenes) * req.seconds_per_scene,
+        "duration_seconds": sum(scene_durations),
         "filename": filename,
         "library_url": f"/api/studio/videos/{video_id}/file",
         "download_url": "/api/studio/renders/" + filename,
