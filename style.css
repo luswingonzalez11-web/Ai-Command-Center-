@@ -47,3 +47,23 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
 .footer{border-top:1px solid #12364a;padding-top:16px}
 ::selection{background:#1b9bbd;color:white}
 @media(max-width:650px){.module-intro{padding:14px}.module-signal{font-size:8px}.module-intro:after{right:-35px}.hero:after{right:-190px}}
+
+
+/* Conversational transcript: clean assistant-style layout, no message bubbles */
+.chat-thread{display:flex;flex-direction:column;gap:0;margin:28px auto 10px;max-width:900px}
+.chat-turn{padding:24px 0 30px;border-bottom:1px solid #17435b}
+.chat-message{display:grid;grid-template-columns: minmax(92px,130px) minmax(0,1fr);gap:18px;padding:15px 4px;align-items:start}
+.chat-user{margin-bottom:8px}
+.chat-author{color:#8fb6c9;font-size:10px;font-weight:800;letter-spacing:1.5px;padding-top:5px}
+.chat-copy{color:var(--white);font-size:15px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-agent .chat-author{color:var(--cyan)}
+.agent-mark{display:inline-flex;align-items:center;gap:7px}
+.agent-mark:before{content:"✧";font-size:16px;color:var(--cyan);text-shadow:0 0 12px #29d8f1aa}
+.chat-final{margin-top:8px;padding-top:20px;border-top:1px solid #12364a}
+.chat-final .chat-copy{color:#effbff}
+@media(max-width:650px){
+ .chat-message{grid-template-columns:1fr;gap:5px;padding:13px 2px}
+ .chat-author{padding-top:0}
+ .chat-copy{font-size:14px;line-height:1.75}
+ .chat-turn{padding:18px 0 22px}
+}
