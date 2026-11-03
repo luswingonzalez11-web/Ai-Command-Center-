@@ -14,7 +14,7 @@ load_dotenv()
 
 DB = Path(__file__).with_name("jarvis.db")
 
-app = FastAPI(title="JARVIS CORE API", version="2.1.0")
+app = FastAPI(title="JARVIS CORE API", version="2.2.0")
 
 origin = os.getenv("CORS_ORIGIN", "*")
 
@@ -76,7 +76,7 @@ PROVIDERS = {
     "claude": {
         "key": "ANTHROPIC_API_KEY",
         "url": "https://api.anthropic.com/v1/messages",
-        "model": "claude-3-5-haiku-latest",
+        "model": "claude-haiku-5-5",
         "kind": "claude",
     },
     "gemini": {
@@ -132,9 +132,7 @@ async def chat(req: ChatRequest):
             if cfg["kind"] == "openai":
                 r = await client.post(
                     cfg["url"],
-                    headers={
-                        "Authorization": f"Bearer {key}"
-                    },
+                    headers={"Authorization": f"Bearer {key}"},
                     json={
                         "model": model,
                         "messages": [
