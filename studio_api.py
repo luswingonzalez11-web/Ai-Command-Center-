@@ -186,7 +186,8 @@ def get_video(video_id: int):
     path = VIDEO_DIR / row["filename"]
     if not path.is_file():
         raise HTTPException(404, "El archivo no está disponible en el almacenamiento del servidor")
-    return FileResponse(path, media_type=row["media_type"], filename=row["filename"])
+    # Serve inline so the HTML5 <video> element can play the file instead of forcing a download.
+    return FileResponse(path, media_type=row["media_type"])
 
 @router.post("/videos/{video_id}/status")
 def set_video_status(video_id: int, status: str = Form(...)):
