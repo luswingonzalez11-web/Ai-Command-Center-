@@ -1,4 +1,4 @@
-https://ai-command-center-pavd.onrender.com
+const API_BASE = "https://ai-command-center-pavd.onrender.com";
 const modules=[
 ["core","⌂","Núcleo"],["ai","✧","SUPER AI"],["command","◈","Command Center"],["board","⚖","AI Board"],["video","▣","Video Studio"],["social","↗","Social Media"],["evolution","⟳","Evolution"],["security","⬡","Anti-Hack"],["memory","▤","Memoria"],["settings","⚙","Sistema"],["connections","⌘","Conexiones"]];
 const agents=[["ChatGPT","Orquestador"],["Claude","Director creativo"],["Gemini","Investigador"],["DeepSeek","Ingeniero"],["Grok","Evaluador crítico"]];
