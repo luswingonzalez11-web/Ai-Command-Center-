@@ -61,7 +61,6 @@ class VideoRenderRequest(BaseModel):
 class VideoAnimateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     prompt: str = Field(min_length=8, max_length=6000)
-    seconds_per_scene: int = Field(default=4, ge=2, le=8)
 
 
 class TaskCreate(BaseModel):
@@ -372,7 +371,8 @@ def render_script_video(req: VideoRenderRequest):
         "library_url": f"/api/studio/videos/{library_id}/file",
         "status": "review",
         "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
-        "duration_seconds": len(scenes) * req.seconds_per_scene,
+        "duration_seconds": sum(scene_durations),
+        "scene_durations": scene_durations,
         "download_url": "/api/studio/renders/" + filename,
         "subtitle_url": "/api/studio/subtitles/" + subtitle_name
     }
@@ -460,6 +460,21 @@ async def animate_from_description(req: VideoAnimateRequest):
     except Exception as exc:
         raise HTTPException(502, "No se pudieron crear las escenas 2D: " + str(exc)[:400])
 
+    # JARVIS chooses a different duration for each scene based on its narrative role.
+    def choose_scene_duration(index, description, story):
+        text = (description + " " + story).lower()
+        if any(word in text for word in ("persecución", "ataque", "explosión", "corre", "huye", "disparo", "attack", "chase")):
+            return 3
+        if any(word in text for word in ("misterio", "suspenso", "silencio", "espera", "oscuro", "sombra", "mystery", "silence")):
+            return 6
+        if any(word in text for word in ("revelación", "descubre", "aparece", "reveal", "final", "puerta", "mensaje")):
+            return 5
+        return (4, 5, 4, 6)[index % 4]
+
+    scene_durations = [
+        choose_scene_duration(i, scene.get("description", ""), req.prompt)
+        for i, scene in enumerate(scenes)
+    ]
     filename = uuid.uuid4().hex + ".mp4"
     target = RENDER_DIR / filename
     width, height, fps = 720, 1280, 20
@@ -483,7 +498,7 @@ async def animate_from_description(req: VideoAnimateRequest):
                     base_path.write_bytes(base_png)
                     with Image.open(base_path) as opened:
                         base_image = opened.convert("RGB")
-                    total_frames = req.seconds_per_scene * fps
+                    total_frames = scene_durations[scene_index] * fps
                     for frame_no in range(total_frames):
                         progress = frame_no / max(1, total_frames - 1)
                         zoom = 1.0 + 0.045 * progress
