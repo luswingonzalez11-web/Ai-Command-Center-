@@ -508,40 +508,28 @@ function escapeHtml(s) {
 }
 
 async function executeTask(task, button) {
-  if (paused) {
-    notifySection(active, "Sistema pausado: no se envió " + task);
-    return;
-  }
+  if (paused) { notifySection(active, "Sistema pausado: no se envió " + task); return; }
   const provider = agentStates.openai ? "openai" : (enabledAgents()[0]?.[2] || null);
-  if (!provider) {
-    alert("No hay agentes habilitados. Activa al menos uno en AI Team Control.");
-    return;
-  }
-
-  const originalLabel = button.textContent;
-  button.disabled = true;
-  button.textContent = "Enviando a la IA...";
-  const request = `Eres un agente de AI Command Center. Atiende esta tarea y entrega un resultado útil, concreto y completo. Si falta información, indica tus supuestos y pregunta solo lo imprescindible. No afirmes que has publicado, desplegado, guardado o ejecutado acciones externas que no hayas realizado.\\n\\nTAREA: ${task}`;
-
+  if (!provider) { alert("No hay agentes habilitados. Activa al menos uno en AI Team Control."); return; }
+  const originalLabel = button.textContent; button.disabled = true; button.textContent = 'JARVIS trabajando...';
+  const taskId = "task-" + Date.now();
+  const isVideo = /video|mp4|short|reel|tiktok|youtube|historia|episodio|storyboard|guion|viral|archivo 09/i.test(task);
   try {
-    const response = await askAgent(provider, request, {task_id: "task-" + Date.now(), request_type: "task"});
-    const answer = response.answer || "Sin respuesta del proveedor.";
-    const agentName = agents.find(a => a[2] === provider)?.[0] || provider;
-    tasks.unshift(task + " · respuesta recibida");
-    messages.unshift({q: "Nueva tarea: " + task, p: agentName, a: answer, results: []});
-    notifySection("ai", "Respuesta de " + agentName + " para: " + task);
-    active = "ai";
-    render();
-    const status = $("#chatStatus");
-    if (status) status.textContent = "Tarea completada · respuesta recibida.";
-  } catch (e) {
-    button.disabled = false;
-    button.textContent = originalLabel;
-    const detail = "No se pudo completar la tarea: " + e.message;
-    tasks.unshift(task + " · error");
-    notifySection(active, detail);
-    alert(detail);
-  }
+    if (isVideo) {
+      const produced = await produceVideo(task, provider, taskId);
+      messages.unshift({q:"Propuesta de video: "+task,p:"JARVIS · Video Studio",a:"MP4 generado y guardado en AI Task & Video Studio. "+produced.video.scenes+" escenas · "+produced.video.duration_seconds+" segundos.",results:[]});
+      notifySection("video", "MP4 generado: " + produced.title); active = "ai"; render(); return;
+    }
+    const response = await askAgent(provider, "Atiende esta tarea del AI Command Center. Usa el contexto de sus módulos y entrega un resultado concreto. No pidas contexto que no sea imprescindible. No afirmes acciones externas no realizadas.\n\nTAREA: " + task, {task_id:taskId,request_type:"task"});
+    const agentName = agents.find(a=>a[2]===provider)?.[0] || provider;
+    tasks.unshift(task + " · respuesta recibida"); messages.unshift({q:"Nueva tarea: "+task,p:agentName,a:response.answer||"Sin respuesta del proveedor.",results:[]});
+    notifySection("ai","Respuesta de "+agentName+" para: "+task); active="ai"; render();
+  } catch(e) { button.disabled=false; button.textContent=originalLabel; notifySection(active,e.message); alert('No se pudo completar la tarea: '+e.message); }
+}
+
+async function produceVideo(prompt, provider="openai", taskId=null) {
+  const r=await fetch(API_BASE+"/api/video/produce",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,provider,task_id:taskId})});
+  const data=await r.json(); if(!r.ok) throw new Error(data.detail||"No se pudo generar el MP4."); return data;
 }
 
 async function askAgent(provider, message, tracking = {}) {
