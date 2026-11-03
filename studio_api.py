@@ -409,35 +409,45 @@ async def animate_from_description(req: VideoAnimateRequest):
         async with httpx.AsyncClient(timeout=180) as client:
             for index in range(4):
                 scene_prompt = (
-                    "Create ONE complete, original, hand-drawn 2D cartoon/graphic-novel illustration "
-                    "for scene " + str(index + 1) + " of 4 in a vertical horror short. "
-                    "Overall story: " + req.prompt[:2500] + "\\n"
-                    "Illustration requirements: show a clear cinematic moment with an environment, "
-                    "at least one recognizable object or character relevant to this scene, layered shapes, "
-                    "strong silhouettes and moody lighting. Keep the SVG visually clear, not overly detailed. "
-                    "Return ONLY one standalone SVG, no Markdown, no JSON, no explanations. "
-                    "Use width='720' height='1280' viewBox='0 0 720 1280'. "
-                    "Use simple vector elements only: svg, title, desc, defs, linearGradient, radialGradient, "
-                    "stop, g, path, rect, circle, ellipse, line, polygon, polyline. "
-                    "No scripts, foreignObject, external URLs or external images. "
-                    "Keep the SVG compact, ideally under 2500 output tokens. "
-                    "Include a short descriptive <title> inside the SVG."
+                    "Draw one simple but expressive 2D vector illustration for scene "
+                    + str(index + 1) + " of 4. Story context: " + req.prompt[:900] + "\\n"
+                    "Return ONLY a complete SVG, 720x1280, viewBox='0 0 720 1280'. "
+                    "Make a cinematic horror composition with one main subject and a clear background. "
+                    "STRICT SIZE LIMIT: maximum 18 SVG drawing elements total; use only rect, circle, ellipse, "
+                    "line, polygon, path and g. Prefer basic shapes; no gradients, filters, patterns, metadata "
+                    "or long paths. Keep every attribute short. Include one short title. "
+                    "No scripts, foreignObject, external URLs or images. Output SVG markup only."
                 )
-                response = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers=headers,
-                    json={"model": model, "max_tokens": 3500,
-                          "messages": [{"role": "user", "content": scene_prompt}]}
-                )
-                data = response.json()
-                if response.is_error:
-                    detail = data.get("error", {}).get("message", "Error de Claude")
-                    raise HTTPException(response.status_code, "Claude: " + detail[:500])
-                raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+                data = {}
+                raw = ""
+                for attempt in range(2):
+                    compact_prompt = scene_prompt
+                    if attempt == 1:
+                        compact_prompt = (
+                            "Create a VERY SIMPLE complete SVG illustration for horror scene "
+                            + str(index + 1) + ". Context: " + req.prompt[:350] + "\\n"
+                            "SVG only, 720x1280, viewBox='0 0 720 1280'. Maximum 10 drawing elements. "
+                            "Use only rect, circle, ellipse, line and polygon. No gradients, defs, filters, "
+                            "long paths, external assets or explanations. One recognizable subject, dark mood. "
+                            "Keep markup extremely short and close the svg tag."
+                        )
+                    response = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers=headers,
+                        json={"model": model, "max_tokens": 3500,
+                              "messages": [{"role": "user", "content": compact_prompt}]}
+                    )
+                    data = response.json()
+                    if response.is_error:
+                        detail = data.get("error", {}).get("message", "Error de Claude")
+                        raise HTTPException(response.status_code, "Claude: " + detail[:500])
+                    raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+                    if data.get("stop_reason") != "max_tokens":
+                        break
                 if not raw:
                     raise ValueError("Claude no devolvió la ilustración de la escena " + str(index + 1) + ".")
                 if data.get("stop_reason") == "max_tokens":
-                    raise ValueError("La ilustración " + str(index + 1) + " quedó demasiado larga. Vuelve a intentarlo.")
+                    raise ValueError("Claude superó el límite incluso con el dibujo simplificado de la escena " + str(index + 1) + ". Inténtalo otra vez.")
                 svg_match = re.search(r"<svg\b[\s\S]*?</svg>", raw, flags=re.I)
                 if not svg_match:
                     raise ValueError("Claude no devolvió un SVG completo para la escena " + str(index + 1) + ".")
