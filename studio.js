@@ -51,10 +51,24 @@
         <p class="muted" id="vrMessage">La primera versión genera escenas gráficas animadas, no personajes 3D ni video cinematográfico.</p>
         <div id="vrResult"></div>
       </div>
+      <div class="hero" style="margin-top:24px"><div><div class="eyebrow">CLAUDE 2D ANIMATION</div><h2>Animación desde una descripción</h2><div class="muted">Claude dibuja escenas 2D originales y JARVIS las convierte en MP4 vertical.</div></div><div class="reactor">✦</div></div>
+      <div class="card" style="margin-top:16px">
+        <h3>Describe lo que quieres ver</h3>
+        <div class="formrow">
+          <input id="a2dTitle" maxlength="120" placeholder="Título (ej. ARCHIVO 09 — La señal)">
+          <textarea id="a2dPrompt" maxlength="6000" rows="6" placeholder="Ej. Un soldado entra en un laboratorio abandonado. Una luz roja parpadea y una silueta aparece al fondo..."></textarea>
+          <label class="muted">Duración por escena</label>
+          <select id="a2dSeconds"><option value="2">2 segundos</option><option value="4" selected>4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select>
+          <button class="btn primary" id="a2dCreate">Dibujar y generar animación 2D</button>
+        </div>
+        <p class="muted" id="a2dMessage">Claude crea cuatro ilustraciones originales en SVG. JARVIS añade movimiento de cámara y renderiza el MP4. La generación usa tu API de Anthropic y puede consumir créditos.</p>
+        <div id="a2dResult"></div>
+      </div>
       <h3 class="sectiontitle">Biblioteca</h3><div id="svVideos" class="grid"><div class="empty">Cargando videos...</div></div>`;
     document.querySelector("#stCreate").onclick = createTask;
     document.querySelector("#svUpload").onclick = uploadVideo;
     document.querySelector("#vrCreate").onclick = renderScriptVideo;
+    document.querySelector("#a2dCreate").onclick = renderAnimation2D;
     await Promise.all([loadTasks(),loadVideos()]);
   };
 
@@ -122,6 +136,39 @@
         result.appendChild(subtitle);
       }
     } catch(e) { msg.textContent=e.message; }
+  }
+
+  async function renderAnimation2D() {
+    const title=document.querySelector("#a2dTitle").value.trim();
+    const prompt=document.querySelector("#a2dPrompt").value.trim();
+    const seconds=Number(document.querySelector("#a2dSeconds").value);
+    const msg=document.querySelector("#a2dMessage");
+    const result=document.querySelector("#a2dResult");
+    if(!title || prompt.length<8){msg.textContent="Añade un título y describe la animación.";return;}
+    const btn=document.querySelector("#a2dCreate");
+    btn.disabled=true;
+    msg.textContent="Claude está dibujando cuatro escenas 2D. Después JARVIS renderizará el MP4; puede tardar varios minutos...";
+    result.innerHTML="";
+    try {
+      const data=await request("/api/studio/videos/animate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,prompt,seconds_per_scene:seconds})});
+      notify("Animación 2D creada: "+title);
+      msg.textContent="¡Animación creada! "+data.scenes+" escenas · "+data.duration_seconds+" segundos.";
+      const link=document.createElement("a");
+      link.href=API+data.download_url;
+      link.textContent="Descargar MP4";
+      link.className="btn primary";
+      link.setAttribute("download",data.filename);
+      result.appendChild(link);
+      const descriptions=document.createElement("p");
+      descriptions.className="muted";
+      descriptions.textContent=(data.scene_descriptions||[]).join(" · ");
+      result.appendChild(descriptions);
+      await loadVideos();
+    } catch(e) {
+      msg.textContent=e.message;
+    } finally {
+      btn.disabled=false;
+    }
   }
 
   async function uploadVideo() {
