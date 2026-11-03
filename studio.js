@@ -1,5 +1,6 @@
 (() => {
   const API = "https://jarvis-core-wvls.onrender.com";
+  const notify = (label) => window.jarvisNotify?.("studio", label);
   const nav = document.querySelector("#nav");
   if (!nav) return;
   const button = document.createElement("button");
@@ -65,6 +66,7 @@
     msg.textContent="Calculando estimación y guardando...";
     try {
       const task=await request("/api/studio/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,description})});
+      notify("Nueva tarea: " + title);
       msg.textContent="Guardada. Tiempo estimado: "+duration(task.estimate_minutes)+". Pulsa Poner a trabajar cuando quieras iniciarla.";
       document.querySelector("#stTitle").value="";document.querySelector("#stDesc").value="";
       await loadTasks();
@@ -102,6 +104,7 @@
     result.innerHTML="";
     try {
       const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds,voice_enabled:document.querySelector("#vrVoice").checked,voice:"es-MX-DaliaNeural"})});
+      notify("Nuevo video generado: " + title);
       msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos."+ (data.voice_status==="generated"?" · Voz incorporada":"");
       const link=document.createElement("a");
       link.href=API+data.download_url;
@@ -128,7 +131,7 @@
     if(!title||!file){msg.textContent="Añade un título y selecciona un video.";return;}
     const form=new FormData();form.append("title",title);form.append("description",document.querySelector("#svDesc").value);form.append("file",file);
     msg.textContent="Subiendo video...";
-    try{await request("/api/studio/videos",{method:"POST",body:form});msg.textContent="Video guardado en la biblioteca.";document.querySelector("#svFile").value="";await loadVideos();}
+    try{await request("/api/studio/videos",{method:"POST",body:form});notify("Nuevo video en biblioteca: " + title);msg.textContent="Video guardado en la biblioteca.";document.querySelector("#svFile").value="";await loadVideos();}
     catch(e){msg.textContent=e.message;}
   }
 
@@ -145,7 +148,7 @@
           <div class="formrow"><select data-video-status="${v.id}"><option value="review">En revisión</option><option value="approved">Aprobado</option><option value="rejected">Rechazado</option><option value="ready_to_publish">Listo para publicar</option></select><button class="btn" data-save-status="${v.id}">Guardar estado</button></div>
         </div>`).join(""):'<div class="empty">Todavía no hay videos. Sube un archivo para comenzar.</div>';
       videos.forEach(v=>{const s=box.querySelector('[data-video-status="'+v.id+'"]');if(s)s.value=v.status;});
-      box.querySelectorAll("[data-save-status]").forEach(b=>b.onclick=async()=>{const id=b.dataset.saveStatus;const form=new FormData();form.append("status",box.querySelector('[data-video-status="'+id+'"]').value);await request("/api/studio/videos/"+id+"/status",{method:"POST",body:form});loadVideos();});
+      box.querySelectorAll("[data-save-status]").forEach(b=>b.onclick=async()=>{const id=b.dataset.saveStatus;const form=new FormData();form.append("status",box.querySelector('[data-video-status="'+id+'"]').value);await request("/api/studio/videos/"+id+"/status",{method:"POST",body:form});notify("Estado de video actualizado");loadVideos();});
     }catch(e){box.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
   }
 })();
