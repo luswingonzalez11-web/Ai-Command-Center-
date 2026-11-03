@@ -235,14 +235,44 @@ def render_script_video(req: VideoRenderRequest):
             with manifest.open("w", encoding="utf-8") as listing:
                 for scene_no, scene in enumerate(scenes):
                     for frame_no in range(req.seconds_per_scene * fps):
-                        image = Image.new("RGB", (width, height), (5, 14, 29))
+                        # Procedural, scene-aware artwork: no image API or paid credits.
+                        lower = scene.lower()
+                        palettes = [
+                            ((5, 14, 29), (8, 43, 61), (25, 190, 220)),
+                            ((22, 8, 30), (75, 20, 55), (245, 80, 110)),
+                            ((8, 24, 18), (20, 75, 48), (100, 220, 150)),
+                            ((25, 18, 7), (90, 58, 18), (245, 185, 75))
+                        ]
+                        bg, glow, accent = palettes[scene_no % len(palettes)]
+                        if any(k in lower for k in ("laboratorio", "virus", "infect", "zombi", "brote", "sangre")):
+                            bg, glow, accent = (18, 5, 12), (95, 18, 35), (235, 55, 75)
+                        elif any(k in lower for k in ("militar", "soldado", "ejército", "base", "arma")):
+                            bg, glow, accent = (12, 22, 17), (45, 65, 40), (180, 195, 125)
+                        elif any(k in lower for k in ("noche", "oscuro", "sombra", "miedo", "misterio")):
+                            bg, glow, accent = (5, 8, 25), (30, 32, 75), (115, 125, 245)
+                        image = Image.new("RGB", (width, height), bg)
                         draw = ImageDraw.Draw(image)
-                        shift = int(70 * frame_no / max(1, req.seconds_per_scene * fps - 1))
-                        draw.ellipse((190 + shift, 170, 530 + shift, 500), fill=(8, 43, 61))
-                        draw.rectangle((0, 0, width, 12), fill=(25, 190, 220))
-                        draw.text((48, 65), "JARVIS CORE / VIDEO STUDIO", font=regular, fill=(83, 218, 238))
-                        draw.text((48, 205), "ESCENA " + str(scene_no + 1).zfill(2), font=bold, fill=(235, 249, 255))
-                        y = 570
+                        shift = int(35 * frame_no / max(1, req.seconds_per_scene * fps - 1))
+                        draw.rectangle((0, 0, width, 12), fill=accent)
+                        # Layered atmospheric rings and a focal illustration.
+                        for radius in (250, 205, 155, 105):
+                            cx, cy = 360 + shift, 390
+                            draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline=glow, width=5)
+                        if any(k in lower for k in ("laboratorio", "virus", "infect", "zombi", "brote")):
+                            draw.ellipse((250+shift, 245, 470+shift, 465), fill=glow, outline=accent, width=7)
+                            draw.ellipse((300+shift, 295, 420+shift, 415), outline=accent, width=5)
+                            draw.line((270+shift, 355, 450+shift, 355), fill=accent, width=5)
+                            draw.line((360+shift, 255, 360+shift, 455), fill=accent, width=5)
+                        elif any(k in lower for k in ("militar", "soldado", "ejército", "base")):
+                            draw.rectangle((285+shift, 250, 435+shift, 500), fill=glow, outline=accent, width=6)
+                            draw.polygon([(285+shift,250),(360+shift,175),(435+shift,250)], fill=glow, outline=accent)
+                            draw.rectangle((330+shift, 330, 390+shift, 500), outline=accent, width=5)
+                        else:
+                            draw.ellipse((245+shift, 235, 475+shift, 465), fill=glow, outline=accent, width=7)
+                            draw.ellipse((305+shift, 295, 415+shift, 405), outline=accent, width=5)
+                        draw.text((48, 65), "JARVIS CORE / VIDEO STUDIO", font=regular, fill=accent)
+                        draw.text((48, 545), "ESCENA " + str(scene_no + 1).zfill(2), font=bold, fill=(235, 249, 255))
+                        y = 640
                         for line in textwrap.wrap(scene, width=29)[:9]:
                             draw.text((48, y), line, font=regular, fill=(232, 242, 250))
                             y += 52
