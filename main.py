@@ -25,10 +25,13 @@ APPROVED_EXTENSIONS = {
 }
 
 MAX_FILE_SIZE = 200_000
+GITHUB_REPO = "luswingonzalez11-web/Ai-Command-Center-"
+GITHUB_BRANCH = "feature/ai-task-video-studio"
+GITHUB_API = "https://api.github.com"
 
 app = FastAPI(
     title="JARVIS CORE API",
-    version="4.1.0"
+    version="4.2.0"
 )
 
 app.include_router(studio_router)
@@ -578,6 +581,84 @@ async def chat(req: ChatRequest):
 # --------------------------------------------------
 # DEVELOPER ACCESS
 # --------------------------------------------------
+
+def github_headers():
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise HTTPException(503, "Falta configurar GITHUB_TOKEN en Render.")
+    return {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+
+
+def validate_github_developer(provider: str, filename: str):
+    check_developer(provider.lower())
+    if filename not in {"app.js", "style.css", "index.html", "studio.js"}:
+        raise HTTPException(403, "Archivo protegido. Solo se permiten archivos visuales en esta fase.")
+    return filename
+
+
+class GitHubReadRequest(BaseModel):
+    filename: str
+    provider: str
+
+
+class GitHubCommitRequest(BaseModel):
+    filename: str
+    provider: str
+    content: str = Field(min_length=1, max_length=200000)
+    message: str = Field(min_length=5, max_length=120)
+
+
+async def github_get_file(filename: str):
+    url = GITHUB_API + "/repos/" + GITHUB_REPO + "/contents/" + filename
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(url, headers=github_headers(), params={"ref": GITHUB_BRANCH})
+    if response.status_code == 404:
+        return None
+    if response.is_error:
+        raise HTTPException(502, "GitHub no pudo leer el archivo.")
+    return response.json()
+
+
+@app.get("/api/dev/github/status")
+def github_developer_status(x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    return {"configured": bool(os.getenv("GITHUB_TOKEN")), "repository": GITHUB_REPO, "branch": GITHUB_BRANCH, "authorized_agents": ["openai", "claude"], "editable_files": ["app.js", "style.css", "index.html", "studio.js"], "production_branch_access": False}
+
+
+@app.post("/api/dev/github/read")
+async def github_developer_read(req: GitHubReadRequest, x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    filename = validate_github_developer(req.provider, req.filename)
+    item = await github_get_file(filename)
+    if not item:
+        raise HTTPException(404, "Archivo no encontrado en la rama de desarrollo.")
+    import base64
+    content = base64.b64decode(item["content"]).decode("utf-8")
+    return {"filename": filename, "branch": GITHUB_BRANCH, "content": content, "sha": item.get("sha")}
+
+
+@app.post("/api/dev/github/commit")
+async def github_developer_commit(req: GitHubCommitRequest, x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    filename = validate_github_developer(req.provider, req.filename)
+    if len(req.content.encode("utf-8")) > MAX_FILE_SIZE:
+        raise HTTPException(413, "El archivo supera el límite permitido.")
+    current = await github_get_file(filename)
+    import base64
+    payload = {"message": "JARVIS CORE: " + req.message, "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"), "branch": GITHUB_BRANCH}
+    if current:
+        payload["sha"] = current.get("sha")
+    url = GITHUB_API + "/repos/" + GITHUB_REPO + "/contents/" + filename
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.put(url, headers=github_headers(), json=payload)
+    if response.status_code in (409, 422):
+        raise HTTPException(409, "Conflicto de versión. Vuelve a leer el archivo.")
+    if response.is_error:
+        raise HTTPException(502, "GitHub rechazó el cambio. Comprueba el token y sus permisos.")
+    result = response.json()
+    commit = result.get("commit", {})
+    return {"status": "committed", "provider": req.provider, "filename": filename, "repository": GITHUB_REPO, "branch": GITHUB_BRANCH, "commit_sha": commit.get("sha"), "commit_url": commit.get("html_url"), "production_deployed": False}
+
 
 @app.get("/api/dev/status")
 def developer_status(
