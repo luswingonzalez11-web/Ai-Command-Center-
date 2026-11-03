@@ -619,21 +619,30 @@ async function sendChat() {
   const progress = window.JarvisProgress.start(status, "Preparando solicitud...");
 
   try {
-    const videoRequest = /\b(crea|crear|genera|generar|produce|producir|haz|hazme|quiero|necesito|prepara|prep[aá]rame)\b.{0,100}\b(video|mp4|short|reel|episodio)\b|\b(video|mp4|short|reel)\b.{0,100}\b(crea|genera|produce|haz|prepara)\b/i.test(q);
-    if (videoRequest) {
+    const savedVideoContext = (() => { try { return JSON.parse(localStorage.getItem("jarvis_active_video") || "null"); } catch (_) { return null; } })();
+    const revisionRequest = !!savedVideoContext && /\b(no me gusta|corrige|corrige|arregla|cambia|mejora|modifica|hazlo|hazla|quiero que|ponle|quita|agrega|más|menos|se ve|parece|reemplaza)\b/i.test(q);
+    const videoRequest = /\b(crea|crear|genera|generar|produce|producir|haz|hazme|quiero|necesito|prepara|prep[aá]rame)\b.{0,100}\b(video|mp4|short|reel|episodio|animación|animacion)\b|\b(video|mp4|short|reel|animación|animacion)\b.{0,100}\b(crea|genera|produce|haz|prepara)\b/i.test(q);
+    if (revisionRequest || videoRequest) {
       const provider = selectedMode === "individual" ? $("#provider").value : "openai";
-      if (!agentStates[provider]) throw new Error("Activa el agente seleccionado para producir el video.");
-      status.textContent = "Generando guion y renderizando el MP4...";
-      progress.update("Generando guion y renderizando video...");
-      const produced = await produceVideo(q, provider);
-      const video = produced.video;
-      finalAnswer = "MP4 generado y verificado en la biblioteca de AI Task & Video Studio.\n\n" +
-        "Título: " + (produced.title || video.title) + "\nEscenas: " + video.scenes +
-        "\nDuración: " + video.duration_seconds + " segundos." +
-        "\nEstado: " + video.status + "\n\n" +
-        "Abrir video: " + API_BASE + video.library_url + "\n" +
-        "Descargar MP4: " + API_BASE + video.download_url;
-      finalName = "AI Video Studio";
+      if (!agentStates[provider]) throw new Error("Activa el agente seleccionado para dirigir el trabajo visual.");
+      const isRevision = revisionRequest;
+      const title = isRevision ? savedVideoContext.title : (q.match(/(?:título|titulo)\s*:\s*([^\n]+)/i)?.[1] || "JARVIS CORE · Nueva animación").slice(0,120);
+      const originalPrompt = isRevision ? savedVideoContext.prompt : q;
+      status.textContent = isRevision ? "Claude está aplicando tus correcciones..." : "Claude está preparando la animación desde el chat...";
+      progress.update(isRevision ? "Conservando lo que te gustó y corrigiendo lo que pediste..." : "Preparando brief visual y dibujando escenas...");
+      const response = await fetch(API_BASE + "/api/studio/videos/chat", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({title, prompt: originalPrompt, feedback: isRevision ? q : "", revision: isRevision, audio_enabled: true, audio_volume: 0.55})
+      });
+      const produced = await response.json();
+      if (!response.ok) throw new Error(produced.detail || "No se pudo crear la animación.");
+      localStorage.setItem("jarvis_active_video", JSON.stringify({title, prompt: produced.prompt_used || originalPrompt, video_id: produced.video_id, library_url: produced.library_url}));
+      finalAnswer = (isRevision ? "Nueva versión corregida" : "Animación creada") + " y guardada en revisión.\n" +
+        "Título: " + title + "\nEscenas: " + produced.scenes + "\nDuración: " + produced.duration_seconds + " segundos.\n" +
+        "Cambios: " + (isRevision ? q : "Brief visual preparado por Claude") + "\n\n" +
+        "Ver MP4: " + API_BASE + produced.library_url + "\nDescargar: " + API_BASE + produced.download_url +
+        "\n\nLa versión anterior se conserva. Esta nueva versión no se publica hasta que tú la apruebes.";
+      finalName = "Claude · Director creativo";
     } else if (selectedMode === "individual") {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
