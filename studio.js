@@ -108,6 +108,15 @@
       link.className="btn primary";
       link.setAttribute("download",data.filename);
       result.appendChild(link);
+      if(data.subtitle_url){
+        const subtitle=document.createElement("a");
+        subtitle.href=API+data.subtitle_url;
+        subtitle.textContent="Descargar subtítulos (.SRT)";
+        subtitle.className="btn";
+        subtitle.style.marginLeft="8px";
+        subtitle.setAttribute("download","");
+        result.appendChild(subtitle);
+      }
     } catch(e) { msg.textContent=e.message; }
   }
 
