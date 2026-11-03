@@ -369,8 +369,29 @@ function render() {
     `;
   }
 
-  $("#content").innerHTML = html + `
-    <div class="footer">JARVIS CORE 3.0 · Multi-Agent Control MVP</div>
+  const moduleDescriptions = {
+    core: "Vista general del núcleo y estado operativo del ecosistema.",
+    ai: "Interfaz de inteligencia multiagente · comunicación y síntesis.",
+    command: "Orquestación central · controla agentes, modos y misiones.",
+    board: "Gobernanza de IA · propuestas, votaciones y supervisión humana.",
+    video: "Producción creativa · organiza ideas, guiones y entregables.",
+    social: "Centro de distribución · conexiones oficiales y métricas sociales.",
+    evolution: "Mejora continua · análisis técnico y propuestas de evolución.",
+    security: "Defensa del sistema · auditoría, alertas y controles de seguridad.",
+    memory: "Registro operativo local · actividad y elementos de trabajo.",
+    settings: "Configuración del entorno · permisos y comportamiento del equipo.",
+    connections: "Estado de proveedores · diagnóstico de conectividad API."
+  };
+  const moduleIndex = String(modules.findIndex(x => x[0] === active) + 1).padStart(2, "0");
+  const intro = `
+    <div class="module-intro">
+      <div><div class="module-code">JARVIS CORE / MODULE ${moduleIndex}</div>
+        <h2>${m[2]}</h2><p>${moduleDescriptions[active] || "Subsistema JARVIS CORE."}</p>
+      </div>
+      <div class="module-signal"><i></i> INTERFACE READY</div>
+    </div>`;
+  $("#content").innerHTML = intro + html + `
+    <div class="footer">JARVIS CORE · MULTI-AGENT INTELLIGENCE SYSTEM</div>
   `;
 
   const send = $("#send");
