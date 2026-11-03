@@ -115,9 +115,11 @@
     const result=document.querySelector("#vrResult");
     if(!title || script.length<20){msg.textContent="Añade un título y un guion de al menos 20 caracteres.";return;}
     msg.textContent="Generando el MP4. Puede tardar unos minutos...";
+    const progress=window.JarvisProgress?.start(msg,"Preparando escenas y renderizando MP4...");
     result.innerHTML="";
     try {
       const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds,voice_enabled:document.querySelector("#vrVoice").checked,voice:"es-MX-DaliaNeural"})});
+      progress?.update("Video terminado. Preparando enlaces...");
       notify("Nuevo video generado: " + title);
       msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos."+ (data.voice_status==="generated"?" · Voz incorporada":"");
       const link=document.createElement("a");
@@ -135,7 +137,7 @@
         subtitle.setAttribute("download","");
         result.appendChild(subtitle);
       }
-    } catch(e) { msg.textContent=e.message; }
+    } catch(e) { msg.textContent=e.message; } finally { progress?.stop(); }
   }
 
   async function renderAnimation2D() {
@@ -148,9 +150,11 @@
     const btn=document.querySelector("#a2dCreate");
     btn.disabled=true;
     msg.textContent="Claude está dibujando cuatro escenas 2D. Después JARVIS renderizará el MP4; puede tardar varios minutos...";
+    const progress=window.JarvisProgress?.start(msg,"Claude está dibujando las escenas 2D...");
     result.innerHTML="";
     try {
       const data=await request("/api/studio/videos/animate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,prompt,seconds_per_scene:seconds})});
+      progress?.update("Animación terminada. Guardando en la biblioteca...");
       notify("Animación 2D creada: "+title);
       msg.textContent="¡Animación creada! "+data.scenes+" escenas · "+data.duration_seconds+" segundos.";
       const link=document.createElement("a");
@@ -167,6 +171,7 @@
     } catch(e) {
       msg.textContent=e.message;
     } finally {
+      progress?.stop();
       btn.disabled=false;
     }
   }
