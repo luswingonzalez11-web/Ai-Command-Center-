@@ -79,6 +79,12 @@ agents.forEach(a => {
 
 const $ = s => document.querySelector(s);
 
+function closeMobileMenu() {
+  $("#sidebar")?.classList.remove("open");
+  $("#menuBackdrop")?.classList.remove("open");
+  $("#menu")?.setAttribute("aria-expanded", "false");
+}
+
 function saveControls() {
   localStorage.setItem("jarvis_agents", JSON.stringify(agentStates));
   localStorage.setItem("jarvis_mode", mode);
@@ -100,7 +106,7 @@ function nav() {
       active = b.dataset.id;
       markNotificationsRead(active);
       render();
-      $("#sidebar")?.classList.remove("open");
+      closeMobileMenu();
     };
   });
   const studio = $("#studioNav");
@@ -110,7 +116,7 @@ function nav() {
     studio.classList.add("active");
     $("#pageTitle").textContent = "AI Task & Video Studio";
     window.renderStudio?.();
-    $("#sidebar")?.classList.remove("open");
+    closeMobileMenu();
   };
 }
 
@@ -727,7 +733,13 @@ async function loadUsageMetrics() {
 }
 
 $("#menu").onclick = () => {
-  document.querySelector(".sidebar").classList.toggle("open");
+  const opening = !$("#sidebar").classList.contains("open");
+  $("#sidebar").classList.toggle("open", opening);
+  $("#menuBackdrop").classList.toggle("open", opening);
+  $("#menu").setAttribute("aria-expanded", String(opening));
 };
+$("#closeMenu").onclick = closeMobileMenu;
+$("#menuBackdrop").onclick = closeMobileMenu;
+document.addEventListener("keydown", event => { if (event.key === "Escape") closeMobileMenu(); });
 
 render();
