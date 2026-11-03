@@ -183,7 +183,11 @@ def get_video(video_id: int):
         row = c.execute("SELECT * FROM studio_videos WHERE id=?", (video_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Video no encontrado")
+    # Uploaded videos live in VIDEO_DIR; generated MP4s live in RENDER_DIR.
+    # Check both locations so library playback works for either kind of video.
     path = VIDEO_DIR / row["filename"]
+    if not path.is_file():
+        path = RENDER_DIR / row["filename"]
     if not path.is_file():
         raise HTTPException(404, "El archivo no está disponible en el almacenamiento del servidor")
     # Serve inline so the HTML5 <video> element can play the file instead of forcing a download.
