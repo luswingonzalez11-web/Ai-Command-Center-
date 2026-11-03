@@ -49,7 +49,20 @@ const agents = [
 let active = "core";
 let messages = [];
 let tasks = [];
-let mode = localStorage.getItem("jarvis_mode") || "individual";
+const BOARD_KEY = "jarvis_ai_board_v1";
+let boardProposals = [];
+try { boardProposals = JSON.parse(localStorage.getItem(BOARD_KEY)) || []; } catch { boardProposals = []; }
+const BOARD_VOTERS = ["ChatGPT", "Claude", "Gemini", "Grok (temporal)"];
+function saveBoard() { localStorage.setItem(BOARD_KEY, JSON.stringify(boardProposals)); }
+function boardStatus(p) {
+  const yes = Object.values(p.votes).filter(v => v === "approve").length;
+  const no = Object.values(p.votes).filter(v => v === "reject").length;
+  if (yes === 2 && no === 2) return "Empate · aprobación humana";
+  if (yes >= 3) return "Aprobada por mayoría";
+  if (no >= 3) return "Rechazada por mayoría";
+  return "Votación en curso";
+}
+const mode = localStorage.getItem("jarvis_mode") || "individual";
 let paused = localStorage.getItem("jarvis_paused") === "true";
 
 let agentStates;
@@ -237,13 +250,36 @@ function render() {
   } else if (active === "board") {
     html = `
       <div class="card">
+        <div class="eyebrow">GOVERNANCE / HUMAN OVERSIGHT</div>
         <h2>AI Board</h2>
-        <p class="muted">Panel para registrar propuestas y preparar votaciones.</p>
+        <p class="muted">Cuatro asientos: ChatGPT, Claude, Gemini y Grok temporal. Se requieren 3 de 4 votos para una decisión automática; un empate 2–2 queda en manos del usuario.</p>
         <div class="formrow">
-          <input id="proposal" placeholder="Escribe una propuesta...">
-          <button class="btn primary" id="addProposal">Crear propuesta</button>
+          <input id="proposal" maxlength="240" placeholder="Escribe una propuesta para votar...">
+          <button class="btn primary" id="addProposal">Crear votación</button>
         </div>
-        <div id="proposalList">${taskList()}</div>
+      </div>
+      <h3 class="sectiontitle">Propuestas y votaciones</h3>
+      <div class="list">
+        ${boardProposals.length ? boardProposals.map(p => {
+          const yes = Object.values(p.votes).filter(v => v === "approve").length;
+          const no = Object.values(p.votes).filter(v => v === "reject").length;
+          const status = boardStatus(p);
+          return `<div class="card">
+            <div class="row"><b>${escapeHtml(p.title)}</b><span class="pill">${status}</span></div>
+            <p class="muted">A favor: ${yes}/4 · En contra: ${no}/4 · Sin votar: ${4-yes-no}/4</p>
+            <div class="grid">${BOARD_VOTERS.map((voter,i) => `
+              <label class="listitem"><span>${voter}</span>
+                <select data-board-vote="${p.id}" data-voter="${i}">
+                  <option value="">Sin voto</option>
+                  <option value="approve" ${p.votes[i]==="approve"?"selected":""}>A favor</option>
+                  <option value="reject" ${p.votes[i]==="reject"?"selected":""}>En contra</option>
+                  <option value="abstain" ${p.votes[i]==="abstain"?"selected":""}>Abstención</option>
+                </select>
+              </label>`).join("")}</div>
+            ${yes===2 && no===2 && !p.humanDecision ? `<div class="row"><button class="btn primary" data-board-human="${p.id}" data-decision="approve">Usuario: aprobar empate</button><button class="btn" data-board-human="${p.id}" data-decision="reject">Usuario: rechazar empate</button></div>` : ""}
+            ${p.humanDecision ? `<p class="footer">Decisión final del usuario: ${p.humanDecision==="approve"?"Aprobada":"Rechazada"}</p>` : ""}
+          </div>`;
+        }).join("") : '<div class="empty">Todavía no hay propuestas.</div>'}
       </div>
     `;
 
@@ -374,11 +410,32 @@ function render() {
   if (add) add.onclick = () => {
     const v = $("#proposal").value.trim();
     if (v) {
-      tasks.unshift("Propuesta: " + v);
-      notifySection("board", "Nueva propuesta: " + v);
+      boardProposals.unshift({id: Date.now(), title: v, votes: {}, humanDecision: null, createdAt: new Date().toISOString()});
+      saveBoard();
+      notifySection("board", "Nueva votación: " + v);
       render();
     }
   };
+  document.querySelectorAll("[data-board-vote]").forEach(control => {
+    control.onchange = () => {
+      const proposal = boardProposals.find(p => String(p.id) === control.dataset.boardVote);
+      if (!proposal || proposal.humanDecision) return;
+      if (control.value) proposal.votes[control.dataset.voter] = control.value;
+      else delete proposal.votes[control.dataset.voter];
+      saveBoard();
+      render();
+    };
+  });
+  document.querySelectorAll("[data-board-human]").forEach(button => {
+    button.onclick = () => {
+      const proposal = boardProposals.find(p => String(p.id) === button.dataset.boardHuman);
+      if (!proposal || boardStatus(proposal) !== "Empate · aprobación humana") return;
+      proposal.humanDecision = button.dataset.decision;
+      saveBoard();
+      notifySection("board", "Decisión humana registrada: " + proposal.title);
+      render();
+    };
+  });
 
   document.querySelectorAll(".action").forEach(b => {
     b.onclick = () => {
