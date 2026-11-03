@@ -404,7 +404,7 @@ async def animate_from_description(req: VideoAnimateRequest):
         "(path, rect, circle, ellipse, line, polygon, polyline, g, defs, linearGradient, radialGradient, stop), "
         "no scripts, no foreignObject, no external images/fonts/URLs, and no embedded animation. "
         "Use very little visible text, only if naturally present in the scene. "
-        "Return only a JSON object, not a Markdown code block, with this exact structure: " + '{ "scenes": [ { "description": "short scene action", "svg": "complete SVG markup" } ] }. "
+        "Return only valid JSON, with no Markdown fences. The JSON must have one top-level key named scenes, containing exactly 4 objects. Each object must have two string fields named description and svg. "
         "Exactly 4 scenes, each a complete SVG with viewBox='0 0 720 1280', width='720', height='1280'. Keep each SVG compact but visually detailed. "
         "Story description: " + req.prompt
     )
