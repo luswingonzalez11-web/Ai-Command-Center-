@@ -470,11 +470,7 @@ function render() {
   });
 
   document.querySelectorAll(".action").forEach(b => {
-    b.onclick = () => {
-      tasks.unshift(b.dataset.task);
-      notifySection(active, "Nueva actividad: " + b.dataset.task);
-      render();
-    };
+    b.onclick = () => executeTask(b.dataset.task, b);
   });
 
   const check = $("#checkProviders");
@@ -502,6 +498,42 @@ function escapeHtml(s) {
     '"': "&quot;",
     "'": "&#39;"
   }[c]));
+}
+
+async function executeTask(task, button) {
+  if (paused) {
+    notifySection(active, "Sistema pausado: no se envió " + task);
+    return;
+  }
+  const provider = agentStates.openai ? "openai" : (enabledAgents()[0]?.[2] || null);
+  if (!provider) {
+    alert("No hay agentes habilitados. Activa al menos uno en AI Team Control.");
+    return;
+  }
+
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Enviando a la IA...";
+  const request = `Eres un agente de AI Command Center. Atiende esta tarea y entrega un resultado útil, concreto y completo. Si falta información, indica tus supuestos y pregunta solo lo imprescindible. No afirmes que has publicado, desplegado, guardado o ejecutado acciones externas que no hayas realizado.\\n\\nTAREA: ${task}`;
+
+  try {
+    const answer = await askAgent(provider, request);
+    const agentName = agents.find(a => a[2] === provider)?.[0] || provider;
+    tasks.unshift(task + " · respuesta recibida");
+    messages.unshift({q: "Nueva tarea: " + task, p: agentName, a: answer, results: []});
+    notifySection("ai", "Respuesta de " + agentName + " para: " + task);
+    active = "ai";
+    render();
+    const status = $("#chatStatus");
+    if (status) status.textContent = "Tarea completada · respuesta recibida.";
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    const detail = "No se pudo completar la tarea: " + e.message;
+    tasks.unshift(task + " · error");
+    notifySection(active, detail);
+    alert(detail);
+  }
 }
 
 async function askAgent(provider, message) {
