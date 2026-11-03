@@ -235,15 +235,26 @@ function render() {
           <p class="muted" id="chatStatus">${paused ? "Reanuda el sistema para enviar solicitudes." : "Listo para recibir instrucciones."}</p>
         </div>
 
-        <div class="chatlog" id="chatlog">
-          ${messages.map(x => `
-            <div class="bubble user"><b>Tú</b><br>${escapeHtml(x.q)}</div>
-            ${x.results ? x.results.map(r => `
-              <div class="bubble"><b>${escapeHtml(r.name)}</b><br>${escapeHtml(r.answer)}</div>
-            `).join("") : ""}
-            <div class="bubble"><b>${escapeHtml(x.p)}</b><br>${escapeHtml(x.a)}</div>
+        <section class="chat-thread" id="chatlog" aria-label="Conversación con las IA">
+          ${messages.slice().reverse().map(x => `
+            <article class="chat-turn">
+              <div class="chat-message chat-user">
+                <div class="chat-author">TÚ</div>
+                <div class="chat-copy">${escapeHtml(x.q)}</div>
+              </div>
+              ${x.results ? x.results.map(r => `
+                <div class="chat-message chat-agent">
+                  <div class="chat-author"><span class="agent-mark">${escapeHtml(r.name)}</span></div>
+                  <div class="chat-copy">${escapeHtml(r.answer)}</div>
+                </div>
+              `).join("") : ""}
+              <div class="chat-message chat-agent chat-final">
+                <div class="chat-author"><span class="agent-mark">${escapeHtml(x.p)}</span></div>
+                <div class="chat-copy">${escapeHtml(x.a)}</div>
+              </div>
+            </article>
           `).join("")}
-        </div>
+        </section>
       </div>
     `;
 
