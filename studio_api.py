@@ -489,7 +489,14 @@ async def animate_from_description(req: VideoAnimateRequest):
                     description = str(scene.get("description", "Escena " + str(scene_index + 1)))[:300]
                     descriptions.append(description)
                     lowered = svg.lower()
-                    if "<script" in lowered or "foreignobject" in lowered or "http://" in lowered or "https://" in lowered:
+                    # SVGs normally declare the official W3C namespace using http://.
+                    # Allow that exact namespace, but reject executable or externally-loaded content.
+                    if (
+                        re.search(r"<\\s*script\\b|<\\s*foreignobject\\b|\\bon\\w+\\s*=", lowered)
+                        or re.search(r"(?:href|src)\\s*=\\s*[\"']\\s*(?:https?:|//|data:|file:)", lowered)
+                        or re.search(r"url\\(\\s*[\"']?\\s*(?:https?:|//|data:|file:)", lowered)
+                        or re.search(r"<!entity|<!doctype", lowered)
+                    ):
                         raise ValueError("Claude devolvió SVG con contenido externo o no permitido.")
                     if not re.search(r"<svg[\s>]", svg, re.I) or not re.search(r"</svg>", svg, re.I):
                         raise ValueError("Una escena no contiene un SVG completo.")
