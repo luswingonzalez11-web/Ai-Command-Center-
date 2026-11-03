@@ -1,10 +1,13 @@
 import os
+import json
+import re
 import sqlite3
 import uuid
 import subprocess
 import tempfile
 import textwrap
 import asyncio
+import httpx
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -54,6 +57,12 @@ class VideoRenderRequest(BaseModel):
     seconds_per_scene: int = Field(default=4, ge=2, le=8)
     voice_enabled: bool = False
     voice: str = Field(default="es-MX-DaliaNeural", pattern=r"^es-(MX|ES)-[A-Za-z]+Neural$")
+
+class VideoAnimateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=8, max_length=6000)
+    seconds_per_scene: int = Field(default=4, ge=2, le=8)
+
 
 class TaskCreate(BaseModel):
     title: str = Field(min_length=3, max_length=180)
@@ -366,6 +375,143 @@ def render_script_video(req: VideoRenderRequest):
         "duration_seconds": len(scenes) * req.seconds_per_scene,
         "download_url": "/api/studio/renders/" + filename,
         "subtitle_url": "/api/studio/subtitles/" + subtitle_name
+    }
+
+
+
+
+@router.post("/videos/animate")
+async def animate_from_description(req: VideoAnimateRequest):
+    """Use Claude to draw illustrated 2D SVG scenes, then render them into an animated MP4."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Falta ANTHROPIC_API_KEY en Render.")
+    try:
+        import cairosvg
+        from PIL import Image, ImageEnhance
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise HTTPException(503, "Falta una dependencia del motor 2D: " + str(exc))
+
+    model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
+    prompt = (
+        "Create 4 distinct, coherent 2D illustrated animation keyframes as SVG scenes for a vertical short film. "
+        "The user's story is below. Draw actual environments, props and characters; do NOT make title cards, "
+        "text-only slides, geometric placeholders, or describe what should be drawn. Use a polished hand-drawn "
+        "2D cartoon/graphic-novel style with clear silhouettes, layered backgrounds, expressive characters, "
+        "consistent character design across scenes, cinematic composition and rich visual detail. "
+        "Canvas must be exactly 720x1280. Each SVG must be standalone, valid XML, contain only vector shapes "
+        "(path, rect, circle, ellipse, line, polygon, polyline, g, defs, linearGradient, radialGradient, stop), "
+        "no scripts, no foreignObject, no external images/fonts/URLs, and no embedded animation. "
+        "Use very little visible text, only if naturally present in the scene. "
+        "Return ONLY valid JSON: {\\\"scenes\\\":[{\\\"description\\\":\\\"short scene action\\\",\\\"svg\\\":\\\"complete SVG markup\\\"}, ...]}. "
+        "Exactly 4 scenes, each a complete SVG with viewBox='0 0 720 1280', width='720', height='1280'. "
+        "Story description: " + req.prompt
+    )
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        headers["anthropic-workspace-id"] = workspace_id
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json={"model": model, "max_tokens": 12000,
+                      "messages": [{"role": "user", "content": prompt}]}
+            )
+        data = response.json()
+        if response.is_error:
+            detail = data.get("error", {}).get("message", "Error de Claude")
+            raise HTTPException(response.status_code, "Claude: " + detail[:500])
+        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
+        match = re.search(r"\{.*\}", raw, re.S)
+        if not match:
+            raise ValueError("Claude no devolvió el JSON de escenas.")
+        scene_data = json.loads(match.group(0))
+        scenes = scene_data.get("scenes", [])
+        if len(scenes) != 4:
+            raise ValueError("Claude debe devolver exactamente 4 escenas.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudieron crear las escenas 2D: " + str(exc)[:400])
+
+    filename = uuid.uuid4().hex + ".mp4"
+    target = RENDER_DIR / filename
+    width, height, fps = 720, 1280, 20
+    descriptions = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            manifest = tmpdir / "frames.txt"
+            with manifest.open("w", encoding="utf-8") as listing:
+                for scene_index, scene in enumerate(scenes):
+                    svg = scene.get("svg", "")
+                    description = str(scene.get("description", "Escena " + str(scene_index + 1)))[:300]
+                    descriptions.append(description)
+                    lowered = svg.lower()
+                    if "<script" in lowered or "foreignobject" in lowered or "http://" in lowered or "https://" in lowered:
+                        raise ValueError("Claude devolvió SVG con contenido externo o no permitido.")
+                    if not re.search(r"<svg[\s>]", svg, re.I) or not re.search(r"</svg>", svg, re.I):
+                        raise ValueError("Una escena no contiene un SVG completo.")
+                    base_png = cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=width, output_height=height)
+                    base_path = tmpdir / ("scene_" + str(scene_index) + ".png")
+                    base_path.write_bytes(base_png)
+                    with Image.open(base_path) as opened:
+                        base_image = opened.convert("RGB")
+                    total_frames = req.seconds_per_scene * fps
+                    for frame_no in range(total_frames):
+                        progress = frame_no / max(1, total_frames - 1)
+                        zoom = 1.0 + 0.045 * progress
+                        scaled = base_image.resize((int(width * zoom), int(height * zoom)), Image.Resampling.LANCZOS)
+                        max_x = max(0, scaled.width - width)
+                        max_y = max(0, scaled.height - height)
+                        # Slow cinematic camera drift gives the illustrated scene motion.
+                        left = int(max_x * progress * (1 if scene_index % 2 == 0 else 0.25))
+                        top = int(max_y * progress * (0.25 if scene_index % 2 == 0 else 1))
+                        frame = scaled.crop((left, top, left + width, top + height))
+                        # Subtle exposure flicker for a hand-rendered animation feel.
+                        if frame_no % 7 == 0:
+                            frame = ImageEnhance.Brightness(frame).enhance(0.97)
+                        frame_name = "frame_" + str(scene_index).zfill(2) + "_" + str(frame_no).zfill(4) + ".jpg"
+                        frame_path = tmpdir / frame_name
+                        frame.save(frame_path, quality=90)
+                        listing.write("file '" + str(frame_path) + "'\n")
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            result = subprocess.run(
+                [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+                 "-r", str(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", str(target)],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-1200:])
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(500, "No se pudo renderizar la animación 2D: " + str(exc)[:450])
+
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        cur = c.execute(
+            "INSERT INTO studio_videos(title,description,filename,media_type,size_bytes,status,created_at) VALUES(?,?,?,?,?,?,?)",
+            (req.title[:180], req.prompt[:4000], filename, "video/mp4", target.stat().st_size, "review", now)
+        )
+        video_id = cur.lastrowid
+    return {
+        "video_id": video_id,
+        "title": req.title,
+        "scenes": len(scenes),
+        "duration_seconds": len(scenes) * req.seconds_per_scene,
+        "filename": filename,
+        "library_url": f"/api/studio/videos/{video_id}/file",
+        "download_url": "/api/studio/renders/" + filename,
+        "scene_descriptions": descriptions,
+        "status": "review"
     }
 
 
