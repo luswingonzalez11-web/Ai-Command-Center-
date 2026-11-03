@@ -70,31 +70,40 @@ async def chat(req: ChatRequest):
                 data = r.json()
                 if r.is_error: raise HTTPException(r.status_code, data.get("error",{}).get("message","Error del proveedor"))
                 answer = data["choices"][0]["message"]["content"]
-            elif cfg["kind"] == "claude":
-               headers = {
-    "x-api-key": key,
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json"
-}
+                       elif cfg["kind"] == "claude":
+                headers = {
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                }
 
-workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
+                workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
 
-if workspace_id:
-    headers["anthropic-workspace-id"] = workspace_id
+                if workspace_id:
+                    headers["anthropic-workspace-id"] = workspace_id
 
-r = await client.post(
-    cfg["url"],
-    headers=headers,
-    json={
-        "model": model,
-        "max_tokens": 1200,
-        "system": "Eres un agente de JARVIS CORE. Responde en el idioma del usuario.",
-        "messages": [{"role": "user", "content": req.message}]
-    }
-)
-                if r.is_error: raise HTTPException(r.status_code, data.get("error",{}).get("message","Error de Anthropic"))
-                answer = "".join(x.get("text","") for x in data.get("content",[]))
-            else:
+                r = await client.post(
+                    cfg["url"],
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "max_tokens": 1200,
+                        "system": "Eres un agente de JARVIS CORE. Responde en el idioma del usuario.",
+                        "messages": [{"role": "user", "content": req.message}]
+                    }
+                )
+
+                data = r.json()
+
+                if r.is_error:
+                    raise HTTPException(
+                        r.status_code,
+                        data.get("error", {}).get("message", "Error de Anthropic")
+                    )
+
+                answer = "".join(
+                    x.get("text", "") for x in data.get("content", [])
+                )
                 url = cfg["url"] + model + ":generateContent"
                 r = await client.post(url, params={"key":key}, json={"contents":[{"parts":[{"text":req.message}]}]})
                 data = r.json()
