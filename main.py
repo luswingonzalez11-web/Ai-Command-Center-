@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from studio_api import router as studio_router
 
 load_dotenv()
 
@@ -27,8 +28,10 @@ MAX_FILE_SIZE = 200_000
 
 app = FastAPI(
     title="JARVIS CORE API",
-    version="4.0.0"
+    version="4.1.0"
 )
+
+app.include_router(studio_router)
 
 origin = os.getenv("CORS_ORIGIN", "*")
 
