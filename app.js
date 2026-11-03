@@ -523,7 +523,9 @@ async function executeTask(task, button) {
   try {
     if (isVideo) {
       const produced = await produceVideo(task, provider, taskId);
-      messages.unshift({q:"Propuesta de video: "+task,p:"JARVIS · Video Studio",a:"MP4 generado y guardado en AI Task & Video Studio. "+produced.video.scenes+" escenas · "+produced.video.duration_seconds+" segundos.",results:[]});
+      progress.stop();
+
+  messages.unshift({q:"Propuesta de video: "+task,p:"JARVIS · Video Studio",a:"MP4 generado y guardado en AI Task & Video Studio. "+produced.video.scenes+" escenas · "+produced.video.duration_seconds+" segundos.",results:[]});
       notifySection("video", "MP4 generado: " + produced.title); active = "ai"; render(); return;
     }
     const response = await askAgent(provider, "Atiende esta tarea del AI Command Center. Usa el contexto de sus módulos y entrega un resultado concreto. No pidas contexto que no sea imprescindible. No afirmes acciones externas no realizadas.\n\nTAREA: " + task, {task_id:taskId,request_type:"task"});
@@ -554,6 +556,37 @@ async function produceVideo(prompt, provider="openai", taskId=null) {
   return {...data, video, title: data.title || video.title, script: data.script || "", status: data.status || video.status};
 }
 
+
+/* Shared progress indicator: indeterminate until the server exposes real progress. */
+window.JarvisProgress = {
+  start(anchor, label = "Procesando solicitud...") {
+    if (!anchor) return {update() {}, stop() {}};
+    anchor.parentElement?.querySelector(".jarvis-progress")?.remove();
+    const panel = document.createElement("div");
+    panel.className = "jarvis-progress";
+    panel.setAttribute("role", "status");
+    panel.setAttribute("aria-live", "polite");
+    panel.innerHTML = '<div class="jarvis-progress-top"><span class="jarvis-progress-label"></span><span class="jarvis-progress-time">00:00</span></div><div class="jarvis-progress-track"><span></span></div><div class="jarvis-progress-hint">El proceso sigue activo. El tiempo depende del proveedor y del trabajo solicitado.</div>';
+    anchor.insertAdjacentElement("afterend", panel);
+    const labelNode = panel.querySelector(".jarvis-progress-label");
+    const timeNode = panel.querySelector(".jarvis-progress-time");
+    const hintNode = panel.querySelector(".jarvis-progress-hint");
+    const started = Date.now();
+    labelNode.textContent = label;
+    const tick = () => {
+      const seconds = Math.floor((Date.now() - started) / 1000);
+      timeNode.textContent = String(Math.floor(seconds / 60)).padStart(2,"0") + ":" + String(seconds % 60).padStart(2,"0");
+      if (seconds >= 60) hintNode.textContent = "Está tardando más de lo habitual, pero la solicitud todavía está en curso. No cierres esta pantalla.";
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return {
+      update(next) { if (labelNode.isConnected) labelNode.textContent = next; },
+      stop() { clearInterval(timer); panel.remove(); }
+    };
+  }
+};
+
 async function askAgent(provider, message, tracking = {}) {
   const r = await fetch(API_BASE + "/api/chat", {
     method: "POST",
@@ -583,6 +616,7 @@ async function sendChat() {
   send.disabled = true;
   send.textContent = "Procesando...";
   status.textContent = "JARVIS está trabajando...";
+  const progress = window.JarvisProgress.start(status, "Preparando solicitud...");
 
   try {
     const videoRequest = /\b(crea|crear|genera|generar|produce|producir|haz|hazme|quiero|necesito|prepara|prep[aá]rame)\b.{0,100}\b(video|mp4|short|reel|episodio)\b|\b(video|mp4|short|reel)\b.{0,100}\b(crea|genera|produce|haz|prepara)\b/i.test(q);
@@ -590,6 +624,7 @@ async function sendChat() {
       const provider = selectedMode === "individual" ? $("#provider").value : "openai";
       if (!agentStates[provider]) throw new Error("Activa el agente seleccionado para producir el video.");
       status.textContent = "Generando guion y renderizando el MP4...";
+      progress.update("Generando guion y renderizando video...");
       const produced = await produceVideo(q, provider);
       const video = produced.video;
       finalAnswer = "MP4 generado y verificado en la biblioteca de AI Task & Video Studio.\n\n" +
@@ -603,6 +638,7 @@ async function sendChat() {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
 
+      progress.update("Conectando con " + (agents.find(a => a[2] === provider)?.[0] || provider) + "...");
       const response = await askAgent(provider, q, {conversation_id: "chat-" + Date.now(), request_type: "chat"});
       finalAnswer = response.answer || "Sin respuesta del proveedor.";
       finalName = agents.find(a => a[2] === provider)?.[0] || provider;
@@ -618,6 +654,7 @@ async function sendChat() {
       }
 
       status.textContent = `Consultando a ${team.length} agentes...`;
+      progress.update("Consultando a " + team.length + " agentes en paralelo...");
       const teamConversationId = "team-" + Date.now();
 
       const responses = await Promise.allSettled(
@@ -642,6 +679,7 @@ async function sendChat() {
       if (!usable.length) throw new Error("Ningún agente pudo responder.");
 
       status.textContent = "ChatGPT está preparando la síntesis del equipo...";
+      progress.update("ChatGPT está preparando la síntesis del equipo...");
 
       const report = usable.map(r =>
         `AGENTE: ${r.name}\nRESPUESTA:\n${r.answer}`
