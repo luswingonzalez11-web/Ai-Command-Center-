@@ -563,7 +563,19 @@ async function sendChat() {
   status.textContent = "JARVIS está trabajando...";
 
   try {
-    if (selectedMode === "individual") {
+    const videoRequest = /\b(crea|crear|genera|generar|produce|producir|haz|hazme|quiero|necesito|prepara|prep[aá]rame)\b.{0,100}\b(video|mp4|short|reel|episodio)\b|\b(video|mp4|short|reel)\b.{0,100}\b(crea|genera|produce|haz|prepara)\b/i.test(q);
+    if (videoRequest) {
+      const provider = selectedMode === "individual" ? $("#provider").value : "openai";
+      if (!agentStates[provider]) throw new Error("Activa el agente seleccionado para producir el video.");
+      status.textContent = "Generando guion y renderizando el MP4...";
+      const produced = await produceVideo(q, provider);
+      finalAnswer = "Video generado y registrado en AI Task & Video Studio.\n\n" +
+        "Título: " + produced.title + "\nEscenas: " + produced.scenes +
+        "\nDuración aproximada: " + produced.duration_seconds + " segundos." +
+        "\nEstado: " + produced.status + "\n\nGuion:\n" + produced.script +
+        "\n\nArchivo: " + API_BASE + produced.library_url;
+      finalName = "AI Video Studio";
+    } else if (selectedMode === "individual") {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
 
