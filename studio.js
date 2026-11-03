@@ -44,6 +44,7 @@
           <textarea id="vrScript" maxlength="12000" rows="7" placeholder="Escribe cada escena en una línea..."></textarea>
           <label class="muted">Duración por escena</label>
           <select id="vrSeconds"><option value="2">2 segundos</option><option value="4" selected>4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select>
+          <label class="muted"><input id="vrVoice" type="checkbox"> Añadir narración automática en español</label>
           <button class="btn primary" id="vrCreate">Generar MP4</button>
         </div>
         <p class="muted" id="vrMessage">La primera versión genera escenas gráficas animadas, no personajes 3D ni video cinematográfico.</p>
@@ -100,8 +101,8 @@
     msg.textContent="Generando el MP4. Puede tardar unos minutos...";
     result.innerHTML="";
     try {
-      const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds})});
-      msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos.";
+      const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds,voice_enabled:document.querySelector("#vrVoice").checked,voice:"es-MX-DaliaNeural"})});
+      msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos."+ (data.voice_status==="generated"?" · Voz incorporada":"");
       const link=document.createElement("a");
       link.href=API+data.download_url;
       link.textContent="Descargar MP4";
