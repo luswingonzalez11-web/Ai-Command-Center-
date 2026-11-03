@@ -104,10 +104,25 @@ async def chat(req: ChatRequest):
                 answer = "".join(
                     x.get("text", "") for x in data.get("content", [])
                 )
+                            else:
                 url = cfg["url"] + model + ":generateContent"
-                r = await client.post(url, params={"key":key}, json={"contents":[{"parts":[{"text":req.message}]}]})
+                r = await client.post(
+                    url,
+                    params={"key": key},
+                    json={
+                        "contents": [
+                            {"parts": [{"text": req.message}]}
+                        ]
+                    }
+                )
                 data = r.json()
-                if r.is_error: raise HTTPException(r.status_code, data.get("error",{}).get("message","Error de Gemini"))
+
+                if r.is_error:
+                    raise HTTPException(
+                        r.status_code,
+                        data.get("error", {}).get("message", "Error de Gemini")
+                    )
+
                 answer = data["candidates"][0]["content"]["parts"][0]["text"]
         return {"provider":name,"model":model,"answer":answer}
     except HTTPException:
