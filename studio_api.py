@@ -344,7 +344,19 @@ def render_script_video(req: VideoRenderRequest):
             subtitle_path.unlink(missing_ok=True)
             raise HTTPException(502, "No se pudo generar o incorporar la voz. Inténtalo de nuevo: " + str(exc)[:250])
 
+    # Register generated MP4 in the library queried by /api/studio/videos.
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        cur = c.execute(
+            "INSERT INTO studio_videos(title,description,filename,media_type,size_bytes,status,created_at) VALUES(?,?,?,?,?,?,?)",
+            (req.title[:180], req.script[:4000], filename, "video/mp4", target.stat().st_size, "review", now)
+        )
+        library_id = cur.lastrowid
+
     return {
+        "video_id": library_id,
+        "library_url": f"/api/studio/videos/{library_id}/file",
+        "status": "review",
         "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
         "duration_seconds": len(scenes) * req.seconds_per_scene,
         "download_url": "/api/studio/renders/" + filename,
