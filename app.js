@@ -594,12 +594,13 @@ async function sendChat() {
       }
 
       status.textContent = `Consultando a ${team.length} agentes...`;
+      const teamConversationId = "team-" + Date.now();
 
       const responses = await Promise.allSettled(
         team.map(async a => ({
           name: a[0],
           id: a[2],
-          response: await askAgent(a[2], q, {conversation_id: "team-" + Date.now(), request_type: "team"})
+          response: await askAgent(a[2], q, {conversation_id: teamConversationId, request_type: "team"})
         }))
       );
 
@@ -627,7 +628,8 @@ async function sendChat() {
         "Actúa como coordinador de JARVIS CORE. Compara las respuestas del equipo, identifica acuerdos, contradicciones y errores. Después entrega una conclusión clara y recomendaciones.\n\nSOLICITUD ORIGINAL:\n" +
         q +
         "\n\nRESPUESTAS DEL EQUIPO:\n" +
-        report
+        report,
+        {conversation_id: teamConversationId, request_type: "team_synthesis"}
       );
 
       finalAnswer = synthesis.answer || "Sin síntesis del equipo.";
