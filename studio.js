@@ -155,6 +155,7 @@
     result.innerHTML="";
     try {
       const data=await request("/api/studio/videos/animate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,prompt,audio_enabled:document.querySelector("#a2dAudio").checked,audio_volume:Number(document.querySelector("#a2dVolume").value)})});
+      try { localStorage.setItem("jarvis_active_video", JSON.stringify({title, prompt, video_id:data.video_id, library_url:data.library_url})); } catch (_) {}
       progress?.update("Animación terminada. Guardando en la biblioteca...");
       notify("Animación 2D creada: "+title);
       msg.textContent="¡Animación creada! "+data.scenes+" escenas · "+data.duration_seconds+" segundos · duración automática · ambiente: "+(data.audio_status||"desactivado")+". ";
