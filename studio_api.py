@@ -4,6 +4,7 @@ import uuid
 import subprocess
 import tempfile
 import textwrap
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -51,6 +52,8 @@ class VideoRenderRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     script: str = Field(min_length=20, max_length=12000)
     seconds_per_scene: int = Field(default=4, ge=2, le=8)
+    voice_enabled: bool = False
+    voice: str = Field(default="es-MX-DaliaNeural", pattern=r"^es-(MX|ES)-[A-Za-z]+Neural$")
 
 class TaskCreate(BaseModel):
     title: str = Field(min_length=3, max_length=180)
@@ -280,8 +283,39 @@ def render_script_video(req: VideoRenderRequest):
             end = start + req.seconds_per_scene
             srt.write(f"{index + 1}\\n{srt_time(start)} --> {srt_time(end)}\\n{scene}\\n\\n")
 
+    voice_status = "disabled"
+    if req.voice_enabled:
+        try:
+            import edge_tts
+            audio_path = RENDER_DIR / (Path(filename).stem + ".mp3")
+            speech_text = " ".join(scenes)
+            async def create_voice():
+                communicate = edge_tts.Communicate(speech_text, req.voice)
+                await communicate.save(str(audio_path))
+            asyncio.run(create_voice())
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            voiced_path = RENDER_DIR / (Path(filename).stem + "_voiced.mp4")
+            mux = subprocess.run(
+                [ffmpeg, "-y", "-i", str(target), "-i", str(audio_path),
+                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                 "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags",
+                 "+faststart", str(voiced_path)],
+                capture_output=True, text=True, timeout=240
+            )
+            audio_path.unlink(missing_ok=True)
+            if mux.returncode != 0:
+                voiced_path.unlink(missing_ok=True)
+                raise RuntimeError(mux.stderr[-800:])
+            target.unlink(missing_ok=True)
+            voiced_path.replace(target)
+            voice_status = "generated"
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            subtitle_path.unlink(missing_ok=True)
+            raise HTTPException(502, "No se pudo generar o incorporar la voz. Inténtalo de nuevo: " + str(exc)[:250])
+
     return {
-        "title": req.title, "filename": filename, "scenes": len(scenes),
+        "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
         "duration_seconds": len(scenes) * req.seconds_per_scene,
         "download_url": "/api/studio/renders/" + filename,
         "subtitle_url": "/api/studio/subtitles/" + subtitle_name
