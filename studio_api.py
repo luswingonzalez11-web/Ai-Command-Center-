@@ -675,6 +675,53 @@ async def animate_from_description(req: VideoAnimateRequest):
     }
 
 
+
+
+class VideoChatRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=8, max_length=6000)
+    feedback: str = Field(default="", max_length=3000)
+    revision: bool = False
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+
+
+@router.post("/videos/chat")
+async def video_chat_control(req: VideoChatRequest):
+    """Turn chat feedback into a revised visual brief, then render a review-only 2D version."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Falta ANTHROPIC_API_KEY en Render.")
+    model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
+    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    instruction = (
+        "Eres el director creativo visual de JARVIS CORE. Reescribe el brief para cuatro escenas 2D verticales cinematográficas. "
+        "Conserva historia, personajes, continuidad, estética y todo lo que el usuario no pidió cambiar. "
+        "Aplica el feedback y concreta composición, apariencia, iluminación, ambiente y acción por escena. "
+        "Devuelve SOLO el brief final en español, máximo 1800 palabras.\n\n"
+        + ("BRIEF ANTERIOR:\n" + req.prompt + "\n\nFEEDBACK DEL USUARIO:\n" + req.feedback
+           if req.revision else "SOLICITUD ORIGINAL:\n" + req.prompt)
+    )
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post("https://api.anthropic.com/v1/messages", headers=headers,
+                json={"model": model, "max_tokens": 2200, "messages": [{"role": "user", "content": instruction}]})
+        data = response.json()
+        if response.is_error:
+            raise HTTPException(response.status_code, "Claude: " + data.get("error", {}).get("message", "Error de Claude")[:400])
+        improved = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+        if len(improved) < 20:
+            raise ValueError("Claude no devolvió un brief visual válido.")
+        rendered = await animate_from_description(VideoAnimateRequest(
+            title=req.title, prompt=improved[:6000], audio_enabled=req.audio_enabled, audio_volume=req.audio_volume))
+        return {**rendered, "prompt_used": improved, "revision": req.revision,
+                "message": "Nueva versión creada y guardada en revisión. No se publicó."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudo procesar la instrucción del chat: " + str(exc)[:350])
+
+
 @router.get("/subtitles/{filename}")
 def download_subtitles(filename: str):
     from fastapi.responses import FileResponse
