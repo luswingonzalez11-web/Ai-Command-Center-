@@ -57,11 +57,102 @@ class VideoRenderRequest(BaseModel):
     seconds_per_scene: int = Field(default=4, ge=2, le=8)
     voice_enabled: bool = False
     voice: str = Field(default="es-MX-DaliaNeural", pattern=r"^es-(MX|ES)-[A-Za-z]+Neural$")
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
 
 class VideoAnimateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     prompt: str = Field(min_length=8, max_length=6000)
     seconds_per_scene: int = Field(default=4, ge=2, le=8)
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+
+
+
+def detect_audio_genre(text: str) -> str:
+    value = (text or "").lower()
+    if any(w in value for w in ("zombi", "infect", "virus", "brote", "cuarentena", "militar", "soldado", "laboratorio")):
+        return "horror"
+    if any(w in value for w in ("terror", "horror", "miedo", "fantasma", "demonio", "asesino", "sangre")):
+        return "horror"
+    if any(w in value for w in ("misterio", "mystery", "investigación", "secreto", "desaparecid")):
+        return "mystery"
+    if any(w in value for w in ("persecución", "explosión", "batalla", "acción", "ataque")):
+        return "action"
+    if any(w in value for w in ("espacio", "futur", "robot", "alien", "nave", "ciencia ficción")):
+        return "scifi"
+    return "suspense"
+
+
+def create_atmosphere_wav(path: Path, duration: float, text: str, volume: float = 0.55) -> str:
+    """Create an original, royalty-free procedural ambience track (no external assets)."""
+    import math
+    import random
+    import wave
+    from array import array
+
+    genre = detect_audio_genre(text)
+    sample_rate = 16000
+    total = max(1, int(sample_rate * max(1.0, duration)))
+    rng = random.Random(90409)
+    samples = array("h")
+    phase_a = phase_b = phase_c = 0.0
+    frequencies = {
+        "horror": (43.0, 57.0, 91.0),
+        "suspense": (48.0, 63.0, 105.0),
+        "mystery": (55.0, 73.0, 147.0),
+        "action": (58.0, 82.0, 123.0),
+        "scifi": (62.0, 89.0, 176.0),
+    }
+    fa, fb, fc = frequencies[genre]
+    # Smooth low drones, uneasy dissonance, slow pulses and restrained static.
+    for i in range(total):
+        t = i / sample_rate
+        fade_in = min(1.0, t / 2.2)
+        fade_out = min(1.0, max(0.0, (duration - t) / 2.0))
+        envelope = fade_in * fade_out
+        wobble = 1.0 + 0.018 * math.sin(2 * math.pi * 0.13 * t)
+        phase_a += 2 * math.pi * fa * wobble / sample_rate
+        phase_b += 2 * math.pi * fb * (1.0 + 0.012 * math.sin(2 * math.pi * 0.09 * t)) / sample_rate
+        phase_c += 2 * math.pi * fc / sample_rate
+        drone = 0.42 * math.sin(phase_a) + 0.22 * math.sin(phase_b) + 0.10 * math.sin(phase_c)
+        pulse_rate = 0.22 if genre in ("horror", "suspense") else 0.12
+        pulse = max(0.0, math.sin(2 * math.pi * pulse_rate * t)) ** 10
+        noise = (rng.random() * 2.0 - 1.0) * (0.018 if genre == "horror" else 0.008)
+        # A few distant heartbeat-like thumps, not loud jump-scares.
+        thump = 0.0
+        beat = t % (3.6 if genre == "horror" else 5.0)
+        if beat < 0.16:
+            thump = math.sin(math.pi * beat / 0.16) * (0.10 if genre == "horror" else 0.045)
+        value = (drone + 0.16 * pulse + noise + thump) * envelope * max(0.0, min(1.0, volume))
+        samples.append(int(max(-1.0, min(1.0, value)) * 26000))
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(samples.tobytes())
+    return genre
+
+
+def add_video_audio(video_path: Path, audio_path: Path, ffmpeg: str, voice_present: bool = False):
+    mixed_path = video_path.with_name(video_path.stem + "_audio.mp4")
+    if voice_present:
+        command = [ffmpeg, "-y", "-i", str(video_path), "-i", str(audio_path),
+                   "-filter_complex", "[0:a]volume=1.0[voice];[1:a]volume=0.24[amb];[voice][amb]amix=inputs=2:duration=first:dropout_transition=2[a]",
+                   "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(mixed_path)]
+    else:
+        command = [ffmpeg, "-y", "-i", str(video_path), "-i", str(audio_path),
+                   "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(mixed_path)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=240)
+    if result.returncode != 0:
+        mixed_path.unlink(missing_ok=True)
+        raise RuntimeError(result.stderr[-900:])
+    video_path.unlink(missing_ok=True)
+    mixed_path.replace(video_path)
 
 
 class TaskCreate(BaseModel):
@@ -231,6 +322,7 @@ def render_script_video(req: VideoRenderRequest):
         words = scenes[0].split()
         scenes = [" ".join(words[i:i+24]) for i in range(0, len(words), 24)]
     scenes = scenes[:30]
+    scene_durations = [req.seconds_per_scene] * len(scenes)
     if not scenes:
         raise HTTPException(400, "El guion no contiene escenas.")
 
@@ -358,6 +450,19 @@ def render_script_video(req: VideoRenderRequest):
             subtitle_path.unlink(missing_ok=True)
             raise HTTPException(502, "No se pudo generar o incorporar la voz. Inténtalo de nuevo: " + str(exc)[:250])
 
+    audio_genre = "off"
+    if req.audio_enabled:
+        ambience_path = RENDER_DIR / (Path(filename).stem + "_ambience.wav")
+        try:
+            audio_genre = create_atmosphere_wav(ambience_path, sum(scene_durations), req.title + " " + req.script, req.audio_volume)
+            import imageio_ffmpeg
+            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe(), voice_present=(voice_status == "generated"))
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(500, "No se pudo incorporar la música ambiental: " + str(exc)[:300])
+        finally:
+            ambience_path.unlink(missing_ok=True)
+
     # Register generated MP4 in the library queried by /api/studio/videos.
     now = datetime.now(timezone.utc).isoformat()
     with connect() as c:
@@ -372,6 +477,7 @@ def render_script_video(req: VideoRenderRequest):
         "library_url": f"/api/studio/videos/{library_id}/file",
         "status": "review",
         "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
+        "audio_status": audio_genre,
         "duration_seconds": sum(scene_durations),
         "scene_durations": scene_durations,
         "download_url": "/api/studio/renders/" + filename,
@@ -537,6 +643,19 @@ async def animate_from_description(req: VideoAnimateRequest):
         target.unlink(missing_ok=True)
         raise HTTPException(500, "No se pudo renderizar la animación 2D: " + str(exc)[:450])
 
+    audio_genre = "off"
+    if req.audio_enabled:
+        ambience_path = RENDER_DIR / (Path(filename).stem + "_ambience.wav")
+        try:
+            audio_genre = create_atmosphere_wav(ambience_path, sum(scene_durations), req.title + " " + req.prompt, req.audio_volume)
+            import imageio_ffmpeg
+            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe())
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(500, "No se pudo incorporar la música ambiental: " + str(exc)[:300])
+        finally:
+            ambience_path.unlink(missing_ok=True)
+
     now = datetime.now(timezone.utc).isoformat()
     with connect() as c:
         cur = c.execute(
@@ -553,6 +672,7 @@ async def animate_from_description(req: VideoAnimateRequest):
         "library_url": f"/api/studio/videos/{video_id}/file",
         "download_url": "/api/studio/renders/" + filename,
         "scene_descriptions": descriptions,
+        "audio_status": audio_genre,
         "status": "review"
     }
 
