@@ -36,9 +36,22 @@
       <h3 class="sectiontitle">Trabajos y propuestas</h3><div id="stTasks" class="list"><div class="empty">Cargando tareas...</div></div>
       <div class="hero" style="margin-top:24px"><div><div class="eyebrow">CREATIVE PRODUCTION</div><h2>Claude Video Studio</h2><div class="muted">Biblioteca privada de videos cargados al servidor.</div></div><div class="reactor">▣</div></div>
       <div class="card" style="margin-top:16px"><h3>Subir video</h3><div class="formrow"><input id="svTitle" maxlength="180" placeholder="Título del video"><textarea id="svDesc" placeholder="Descripción (opcional)"></textarea><input id="svFile" type="file" accept="video/mp4,video/webm,video/quicktime"><button class="btn primary" id="svUpload">Guardar en biblioteca</button></div><p class="muted" id="svMessage">MP4, WebM o MOV · máximo 250 MB. El archivo se almacena en el disco del servidor.</p></div>
+      <div class="hero" style="margin-top:24px"><div><div class="eyebrow">SCRIPT TO VIDEO</div><h2>Generador MP4</h2><div class="muted">Convierte un guion en un storyboard vertical animado.</div></div><div class="reactor">▶</div></div>
+      <div class="card" style="margin-top:16px">
+        <h3>Crear video desde un guion</h3>
+        <div class="formrow">
+          <input id="vrTitle" maxlength="120" placeholder="Título del video">
+          <textarea id="vrScript" maxlength="12000" rows="7" placeholder="Escribe cada escena en una línea..."></textarea>
+          <label class="muted">Duración por escena</label>
+          <select id="vrSeconds"><option value="2">2 segundos</option><option value="4" selected>4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select>
+          <button class="btn primary" id="vrCreate">Generar MP4</button>
+        </div>
+        <p class="muted" id="vrMessage">La primera versión genera escenas gráficas animadas, no personajes 3D ni video cinematográfico.</p>
+        <div id="vrResult"></div>
+      </div>
       <h3 class="sectiontitle">Biblioteca</h3><div id="svVideos" class="grid"><div class="empty">Cargando videos...</div></div>`;
     document.querySelector("#stCreate").onclick = createTask;
-    document.querySelector("#svUpload").onclick = uploadVideo;
+    document.querySelector("#svUpload").onclick = uploadVideo;\n    document.querySelector("#vrCreate").onclick = renderScriptVideo;
     await Promise.all([loadTasks(),loadVideos()]);
   };
 
@@ -73,6 +86,28 @@
       box.querySelectorAll("[data-pause]").forEach(b=>b.onclick=async()=>{await request("/api/studio/tasks/"+b.dataset.pause+"/pause",{method:"POST"});loadTasks();});
       box.querySelectorAll("[data-done]").forEach(b=>b.onclick=async()=>{await request("/api/studio/tasks/"+b.dataset.done+"/complete",{method:"POST"});loadTasks();});
     } catch(e){box.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+  }
+
+
+  async function renderScriptVideo() {
+    const title=document.querySelector("#vrTitle").value.trim();
+    const script=document.querySelector("#vrScript").value.trim();
+    const seconds=Number(document.querySelector("#vrSeconds").value);
+    const msg=document.querySelector("#vrMessage");
+    const result=document.querySelector("#vrResult");
+    if(!title || script.length<20){msg.textContent="Añade un título y un guion de al menos 20 caracteres.";return;}
+    msg.textContent="Generando el MP4. Puede tardar unos minutos...";
+    result.innerHTML="";
+    try {
+      const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds})});
+      msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos.";
+      const link=document.createElement("a");
+      link.href=API+data.download_url;
+      link.textContent="Descargar MP4";
+      link.className="btn primary";
+      link.setAttribute("download",data.filename);
+      result.appendChild(link);
+    } catch(e) { msg.textContent=e.message; }
   }
 
   async function uploadVideo() {
