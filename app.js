@@ -528,8 +528,24 @@ async function executeTask(task, button) {
 }
 
 async function produceVideo(prompt, provider="openai", taskId=null) {
-  const r=await fetch(API_BASE+"/api/video/produce",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,provider,task_id:taskId})});
-  const data=await r.json(); if(!r.ok) throw new Error(data.detail||"No se pudo generar el MP4."); return data;
+  const r = await fetch(API_BASE + "/api/video/produce", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({prompt, provider, task_id: taskId})
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "No se pudo generar el MP4.");
+  const video = data.video || data;
+  if (!video.video_id || !video.filename || !video.library_url) {
+    throw new Error("El servidor terminó la solicitud, pero no confirmó el registro del MP4 en la biblioteca.");
+  }
+  // Do not report completion until the library endpoint can see the saved video.
+  const libraryResponse = await fetch(API_BASE + "/api/studio/videos");
+  if (!libraryResponse.ok) throw new Error("El MP4 se creó, pero no se pudo verificar la biblioteca. Actualiza AI Task & Video Studio.");
+  const library = await libraryResponse.json();
+  const saved = Array.isArray(library) && library.some(item => String(item.id) === String(video.video_id));
+  if (!saved) throw new Error("El MP4 no aparece todavía en la biblioteca. No se marcará como terminado.");
+  return {...data, video, title: data.title || video.title, script: data.script || "", status: data.status || video.status};
 }
 
 async function askAgent(provider, message, tracking = {}) {
@@ -569,11 +585,13 @@ async function sendChat() {
       if (!agentStates[provider]) throw new Error("Activa el agente seleccionado para producir el video.");
       status.textContent = "Generando guion y renderizando el MP4...";
       const produced = await produceVideo(q, provider);
-      finalAnswer = "Video generado y registrado en AI Task & Video Studio.\n\n" +
-        "Título: " + produced.title + "\nEscenas: " + produced.scenes +
-        "\nDuración aproximada: " + produced.duration_seconds + " segundos." +
-        "\nEstado: " + produced.status + "\n\nGuion:\n" + produced.script +
-        "\n\nArchivo: " + API_BASE + produced.library_url;
+      const video = produced.video;
+      finalAnswer = "MP4 generado y verificado en la biblioteca de AI Task & Video Studio.\n\n" +
+        "Título: " + (produced.title || video.title) + "\nEscenas: " + video.scenes +
+        "\nDuración: " + video.duration_seconds + " segundos." +
+        "\nEstado: " + video.status + "\n\n" +
+        "Abrir video: " + API_BASE + video.library_url + "\n" +
+        "Descargar MP4: " + API_BASE + video.download_url;
       finalName = "AI Video Studio";
     } else if (selectedMode === "individual") {
       const provider = $("#provider").value;
