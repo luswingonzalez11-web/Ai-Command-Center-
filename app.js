@@ -1,5 +1,5 @@
 
-const API_BASE = "https://ai-command-center-pavd.onrender.com";
+const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 const modules = [
   ["core", "⌂", "Núcleo"],
@@ -55,15 +55,23 @@ function enabledAgents() {
 function nav() {
   $("#nav").innerHTML = modules.map(([id, ic, n]) =>
     `<button class="navitem ${active === id ? "active" : ""}" data-id="${id}">${ic}　${n}</button>`
-  ).join("");
+  ).join("") + `<button class="navitem" id="studioNav">◉　AI Task & Video Studio</button>`;
 
-  document.querySelectorAll(".navitem").forEach(b => {
+  document.querySelectorAll(".navitem[data-id]").forEach(b => {
     b.onclick = () => {
       active = b.dataset.id;
       render();
       $("#sidebar")?.classList.remove("open");
     };
   });
+  const studio = $("#studioNav");
+  if (studio) studio.onclick = () => {
+    document.querySelectorAll(".navitem").forEach(x => x.classList.remove("active"));
+    studio.classList.add("active");
+    $("#pageTitle").textContent = "AI Task & Video Studio";
+    window.renderStudio?.();
+    $("#sidebar")?.classList.remove("open");
+  };
 }
 
 function card(title, body) {
