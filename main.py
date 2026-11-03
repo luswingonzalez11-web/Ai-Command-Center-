@@ -115,9 +115,9 @@ class DevReadRequest(BaseModel):
 PROVIDERS = {
     "openai": {
         "key": "OPENAI_API_KEY",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "model": "gpt-4o-mini",
-        "kind": "openai",
+        "url": "https://api.openai.com/v1/responses",
+        "model": "gpt-6-astra",
+        "kind": "openai_responses",
     },
     "deepseek": {
         "key": "DEEPSEEK_API_KEY",
@@ -513,8 +513,45 @@ async def chat(req: ChatRequest):
     try:
         async with httpx.AsyncClient(timeout=90) as client:
 
-            # OPENAI, DEEPSEEK AND GROK
-            if cfg["kind"] == "openai":
+            # OPENAI RESPONSES API
+            if cfg["kind"] == "openai_responses":
+                r = await client.post(
+                    cfg["url"],
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": model,
+                        "instructions": system_prompt,
+                        "input": req.message
+                    }
+                )
+
+                data = r.json()
+
+                if r.is_error:
+                    error = data.get("error", {})
+                    raise HTTPException(
+                        r.status_code,
+                        error.get("message", "Error de OpenAI.")
+                    )
+
+                answer_parts = []
+                for item in data.get("output", []):
+                    if item.get("type") == "message":
+                        for part in item.get("content", []):
+                            if part.get("type") in ("output_text", "text"):
+                                answer_parts.append(part.get("text", ""))
+                answer = "".join(answer_parts).strip()
+
+                if not answer:
+                    raise HTTPException(502, "OpenAI no devolvió texto en la respuesta.")
+
+                usage = data.get("usage") or {}
+
+            # DEEPSEEK AND GROK (CHAT COMPLETIONS COMPATIBLE)
+            elif cfg["kind"] == "openai":
                 r = await client.post(
                     cfg["url"],
                     headers={
