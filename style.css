@@ -72,3 +72,13 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
 
 
 @media(max-width:650px){.brand{position:relative;padding-right:42px}.close-menu{display:grid;place-items:center;position:absolute;right:4px;top:2px;width:36px;height:36px;border:1px solid #28718b;border-radius:9px;background:#102b40;color:var(--white);font-size:18px;z-index:2}.menu-backdrop{display:none;position:fixed;inset:0;border:0;border-radius:0;background:rgba(0,5,12,.68);z-index:9;padding:0}.menu-backdrop.open{display:block}.sidebar{z-index:10;overflow-y:auto;overscroll-behavior:contain}}@media(min-width:651px){.close-menu,.menu-backdrop{display:none!important}}
+
+/* JARVIS progress feedback */
+.jarvis-progress{margin:12px 0 18px;padding:14px 15px;border:1px solid #1d6078;border-radius:12px;background:linear-gradient(110deg,#092437,#0a1a2a);box-shadow:0 0 22px #29d8f11a}
+.jarvis-progress-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.jarvis-progress-label{color:#dffaff;font-size:13px;font-weight:650}
+.jarvis-progress-time{color:var(--cyan);font-size:12px;font-variant-numeric:tabular-nums}
+.jarvis-progress-track{height:7px;overflow:hidden;border-radius:99px;background:#18394d}
+.jarvis-progress-track span{display:block;width:38%;height:100%;border-radius:99px;background:linear-gradient(90deg,#087e99,#49e7ff,#8af5ff);box-shadow:0 0 14px #29d8f1aa;animation:jarvisLoading 1.35s ease-in-out infinite}
+.jarvis-progress-hint{margin-top:9px;color:var(--muted);font-size:11px;line-height:1.5}
+@keyframes jarvisLoading{0%{transform:translateX(-110%)}100%{transform:translateX(285%)}}
