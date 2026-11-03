@@ -46,6 +46,8 @@
           <label class="muted">Duración por escena</label>
           <select id="vrSeconds"><option value="2">2 segundos</option><option value="4" selected>4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select>
           <label class="muted"><input id="vrVoice" type="checkbox"> Añadir narración automática en español</label>
+          <label class="muted"><input id="vrAudio" type="checkbox" checked> Música y efectos ambientales automáticos (según género)</label>
+          <label class="muted">Intensidad del ambiente <input id="vrVolume" type="range" min="0.1" max="1" step="0.05" value="0.55"></label>
           <button class="btn primary" id="vrCreate">Generar MP4</button>
         </div>
         <p class="muted" id="vrMessage">La primera versión genera escenas gráficas animadas, no personajes 3D ni video cinematográfico.</p>
@@ -57,6 +59,8 @@
         <div class="formrow">
           <input id="a2dTitle" maxlength="120" placeholder="Título (ej. ARCHIVO 09 — La señal)">
           <textarea id="a2dPrompt" maxlength="6000" rows="6" placeholder="Ej. Un soldado entra en un laboratorio abandonado. Una luz roja parpadea y una silueta aparece al fondo..."></textarea>
+          <label class="muted"><input id="a2dAudio" type="checkbox" checked> Música de suspenso/terror y efectos ambientales automáticos</label>
+          <label class="muted">Intensidad del ambiente <input id="a2dVolume" type="range" min="0.1" max="1" step="0.05" value="0.55"></label>
           <button class="btn primary" id="a2dCreate">Crear animación automáticamente</button>
         </div>
         <p class="muted" id="a2dMessage">JARVIS decide automáticamente el ritmo y la duración de cada escena. Claude crea cuatro ilustraciones SVG; JARVIS añade movimiento de cámara y renderiza el MP4. Usa tu API de Anthropic y puede consumir créditos.</p>
@@ -116,10 +120,10 @@
     const progress=window.JarvisProgress?.start(msg,"Preparando escenas y renderizando MP4...");
     result.innerHTML="";
     try {
-      const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds,voice_enabled:document.querySelector("#vrVoice").checked,voice:"es-MX-DaliaNeural"})});
+      const data=await request("/api/studio/videos/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,script,seconds_per_scene:seconds,voice_enabled:document.querySelector("#vrVoice").checked,voice:"es-MX-DaliaNeural",audio_enabled:document.querySelector("#vrAudio").checked,audio_volume:Number(document.querySelector("#vrVolume").value)})});
       progress?.update("Video terminado. Preparando enlaces...");
       notify("Nuevo video generado: " + title);
-      msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos."+ (data.voice_status==="generated"?" · Voz incorporada":"");
+      msg.textContent="¡Video creado! "+data.scenes+" escenas · "+data.duration_seconds+" segundos."+ (data.voice_status==="generated"?" · Voz incorporada":"")+" · Ambiente: "+(data.audio_status||"desactivado");
       const link=document.createElement("a");
       link.href=API+data.download_url;
       link.textContent="Descargar MP4";
@@ -150,10 +154,10 @@
     const progress=window.JarvisProgress?.start(msg,"Claude está dibujando las escenas 2D...");
     result.innerHTML="";
     try {
-      const data=await request("/api/studio/videos/animate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,prompt})});
+      const data=await request("/api/studio/videos/animate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,prompt,audio_enabled:document.querySelector("#a2dAudio").checked,audio_volume:Number(document.querySelector("#a2dVolume").value)})});
       progress?.update("Animación terminada. Guardando en la biblioteca...");
       notify("Animación 2D creada: "+title);
-      msg.textContent="¡Animación creada! "+data.scenes+" escenas · "+data.duration_seconds+" segundos · duración automática.";
+      msg.textContent="¡Animación creada! "+data.scenes+" escenas · "+data.duration_seconds+" segundos · duración automática · ambiente: "+(data.audio_status||"desactivado")+". ";
       const link=document.createElement("a");
       link.href=API+data.download_url;
       link.textContent="Descargar MP4";
