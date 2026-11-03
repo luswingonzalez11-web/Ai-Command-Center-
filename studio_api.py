@@ -433,16 +433,16 @@ async def animate_from_description(req: VideoAnimateRequest):
                 if response.is_error:
                     detail = data.get("error", {}).get("message", "Error de Claude")
                     raise HTTPException(response.status_code, "Claude: " + detail[:500])
-                raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+                raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
                 if not raw:
                     raise ValueError("Claude no devolvió la ilustración de la escena " + str(index + 1) + ".")
                 if data.get("stop_reason") == "max_tokens":
                     raise ValueError("La ilustración " + str(index + 1) + " quedó demasiado larga. Vuelve a intentarlo.")
-                svg_match = re.search(r"<svg\\b[\\s\\S]*?</svg>", raw, flags=re.I)
+                svg_match = re.search(r"<svg\b[\s\S]*?</svg>", raw, flags=re.I)
                 if not svg_match:
                     raise ValueError("Claude no devolvió un SVG completo para la escena " + str(index + 1) + ".")
                 svg = svg_match.group(0)
-                title_match = re.search(r"<title[^>]*>([\\s\\S]*?)</title>", svg, flags=re.I)
+                title_match = re.search(r"<title[^>]*>([\s\S]*?)</title>", svg, flags=re.I)
                 description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
                 scenes.append({"description": description[:300], "svg": svg})
     except HTTPException:
