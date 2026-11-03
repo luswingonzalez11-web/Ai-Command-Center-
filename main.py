@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from studio_api import router as studio_router
+from studio_api import router as studio_router, VideoRenderRequest, render_script_video
 
 load_dotenv()
 
@@ -309,7 +309,7 @@ def build_agent_system_prompt(provider: str) -> str:
         "Eres un agente autorizado de JARVIS CORE."
     )
 
-    return JARVIS_IDENTITY + "\n\n" + role
+    return JARVIS_IDENTITY + "\n\n" + role + "\n\nJARVIS es la inteligencia compuesta del equipo, no un sexto agente. Conserva tu especialidad, comparte contexto y prioriza entregar trabajo en el módulo correcto. No pidas repetir datos ya presentes. Si recibes una propuesta de video, sigue el flujo de producción de Video Studio en vez de limitarte a aconsejar."
 
 
 # --------------------------------------------------
@@ -467,6 +467,27 @@ async def usage_summary():
     except Exception:
         raise HTTPException(502, "Error consultando analítica.")
 
+
+class VideoProduceRequest(BaseModel):
+    prompt: str = Field(min_length=8, max_length=8000)
+    provider: str = "openai"
+    title: Optional[str] = Field(default=None, max_length=120)
+    task_id: Optional[str] = None
+    voice_enabled: bool = False
+
+@app.post("/api/video/produce")
+async def produce_video(req: VideoProduceRequest):
+    provider = req.provider.lower()
+    if provider not in PROVIDERS:
+        raise HTTPException(400, "Proveedor no soportado para producción.")
+    title = (req.title or req.prompt.strip().splitlines()[0])[:120]
+    prompt = ("Eres el guionista y director de AI Command Center Video Studio. Convierte la propuesta en un guion visual para video vertical breve. Devuelve SOLO entre 4 y 10 escenas, una escena por línea, sin numeración, títulos ni markdown. Cada línea describe una imagen o acción concreta y breve. Mantén continuidad narrativa y un cierre potente. Usa español salvo que el usuario pida otro idioma.\n\nPROPUESTA:\n" + req.prompt)
+    result = await chat(ChatRequest(provider=provider, message=prompt, task_id=req.task_id, request_type='video_script'))
+    script = "\n".join(line.strip().lstrip("0123456789.-) ").strip() for line in result["answer"].splitlines() if line.strip() and not line.strip().startswith("```"))
+    if len(script) < 20:
+        raise HTTPException(502, "El agente no produjo un guion suficiente para generar el video.")
+    rendered = render_script_video(VideoRenderRequest(title=title, script=script, seconds_per_scene=4, voice_enabled=req.voice_enabled))
+    return {"status":"completed","title":title,"provider":provider,"script":script,"video":rendered,"message":"MP4 generado y registrado en AI Task & Video Studio."}
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
