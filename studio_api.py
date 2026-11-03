@@ -1,6 +1,9 @@
 import os
 import sqlite3
 import uuid
+import subprocess
+import tempfile
+import textwrap
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -11,6 +14,8 @@ BASE = Path(__file__).resolve().parent
 DB = BASE / "jarvis_studio.db"
 VIDEO_DIR = BASE / "uploads" / "videos"
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+RENDER_DIR = BASE / "uploads" / "renders"
+RENDER_DIR.mkdir(parents=True, exist_ok=True)
 MAX_VIDEO_BYTES = 250 * 1024 * 1024
 ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
 
@@ -41,6 +46,11 @@ with connect() as c:
         status TEXT NOT NULL DEFAULT 'review',
         created_at TEXT NOT NULL
     )""")
+
+class VideoRenderRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    script: str = Field(min_length=20, max_length=12000)
+    seconds_per_scene: int = Field(default=4, ge=2, le=8)
 
 class TaskCreate(BaseModel):
     title: str = Field(min_length=3, max_length=180)
@@ -188,3 +198,83 @@ def set_video_status(video_id: int, status: str = Form(...)):
     item = dict(updated)
     item["url"] = f"/api/studio/videos/{video_id}/file"
     return item
+
+
+@router.post("/videos/render")
+def render_script_video(req: VideoRenderRequest):
+    """Create a vertical storyboard MP4 from a script."""
+    try:
+        import imageio_ffmpeg
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        raise HTTPException(503, "Faltan dependencias del motor MP4.")
+
+    scenes = [p.strip() for p in req.script.replace("\r", "").split("\n") if p.strip()]
+    if len(scenes) == 1:
+        words = scenes[0].split()
+        scenes = [" ".join(words[i:i+24]) for i in range(0, len(words), 24)]
+    scenes = scenes[:30]
+    if not scenes:
+        raise HTTPException(400, "El guion no contiene escenas.")
+
+    filename = uuid.uuid4().hex + ".mp4"
+    target = RENDER_DIR / filename
+    width, height, fps = 720, 1280, 24
+    try:
+        regular = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
+        bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 46)
+    except OSError:
+        regular, bold = ImageFont.load_default(), ImageFont.load_default()
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "frames.txt"
+            with manifest.open("w", encoding="utf-8") as listing:
+                for scene_no, scene in enumerate(scenes):
+                    for frame_no in range(req.seconds_per_scene * fps):
+                        image = Image.new("RGB", (width, height), (5, 14, 29))
+                        draw = ImageDraw.Draw(image)
+                        shift = int(70 * frame_no / max(1, req.seconds_per_scene * fps - 1))
+                        draw.ellipse((190 + shift, 170, 530 + shift, 500), fill=(8, 43, 61))
+                        draw.rectangle((0, 0, width, 12), fill=(25, 190, 220))
+                        draw.text((48, 65), "JARVIS CORE / VIDEO STUDIO", font=regular, fill=(83, 218, 238))
+                        draw.text((48, 205), "ESCENA " + str(scene_no + 1).zfill(2), font=bold, fill=(235, 249, 255))
+                        y = 570
+                        for line in textwrap.wrap(scene, width=29)[:9]:
+                            draw.text((48, y), line, font=regular, fill=(232, 242, 250))
+                            y += 52
+                        draw.rectangle((48, 1170, 672, 1178), fill=(35, 62, 78))
+                        draw.rectangle((48, 1170, 48 + int(624 * ((scene_no + 1) / len(scenes))), 1178), fill=(38, 211, 232))
+                        frame_name = "frame_" + str(scene_no).zfill(3) + "_" + str(frame_no).zfill(4) + ".jpg"
+                        frame_path = Path(tmp) / frame_name
+                        image.save(frame_path, quality=88)
+                        listing.write("file '" + str(frame_path) + "'\n")
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            result = subprocess.run(
+                [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+                 "-r", str(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", str(target)],
+                capture_output=True, text=True, timeout=240
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-1000:])
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(500, "No se pudo crear el MP4: " + str(exc)[:400])
+
+    return {
+        "title": req.title, "filename": filename, "scenes": len(scenes),
+        "duration_seconds": len(scenes) * req.seconds_per_scene,
+        "download_url": "/api/studio/renders/" + filename
+    }
+
+
+@router.get("/renders/{filename}")
+def download_render(filename: str):
+    from fastapi.responses import FileResponse
+    if not filename.endswith(".mp4") or Path(filename).name != filename:
+        raise HTTPException(400, "Nombre de archivo no válido.")
+    path = RENDER_DIR / filename
+    if not path.is_file():
+        raise HTTPException(404, "MP4 no encontrado.")
+    return FileResponse(path, media_type="video/mp4", filename=filename)
