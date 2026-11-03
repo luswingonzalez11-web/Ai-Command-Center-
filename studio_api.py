@@ -395,17 +395,15 @@ async def animate_from_description(req: VideoAnimateRequest):
 
     model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
     prompt = (
-        "Create 4 distinct, coherent 2D illustrated animation keyframes as SVG scenes for a vertical short film. "
-        "The user's story is below. Draw actual environments, props and characters; do NOT make title cards, "
-        "text-only slides, geometric placeholders, or describe what should be drawn. Use a polished hand-drawn "
-        "2D cartoon/graphic-novel style with clear silhouettes, layered backgrounds, expressive characters, "
-        "consistent character design across scenes, cinematic composition and rich visual detail. "
-        "Canvas must be exactly 720x1280. Each SVG must be standalone, valid XML, contain only vector shapes "
-        "(path, rect, circle, ellipse, line, polygon, polyline, g, defs, linearGradient, radialGradient, stop), "
-        "no scripts, no foreignObject, no external images/fonts/URLs, and no embedded animation. "
-        "Use very little visible text, only if naturally present in the scene. "
-        "Return only valid JSON, with no Markdown fences. The JSON must have one top-level key named scenes, containing exactly 4 objects. Each object must have two string fields named description and svg. "
-        "Exactly 4 scenes, each a complete SVG with viewBox='0 0 720 1280', width='720', height='1280'. Keep each SVG compact but visually detailed. "
+        "Create exactly 4 distinct, coherent hand-drawn 2D cartoon/graphic-novel illustrations for a vertical horror short. "
+        "Draw actual environments, props and characters with layered backgrounds, strong silhouettes, expressive poses, "
+        "consistent character designs, cinematic lighting and detailed composition. Never make text cards or abstract placeholders. "
+        "Each illustration must be a complete standalone SVG with width='720', height='1280', viewBox='0 0 720 1280'. "
+        "Use only safe vector elements: svg, title, desc, defs, linearGradient, radialGradient, stop, g, path, rect, circle, ellipse, line, polygon, polyline. "
+        "No scripts, foreignObject, external URLs, external images, embedded animation, or Markdown. "
+        "IMPORTANT OUTPUT FORMAT: Do NOT return JSON. Return exactly four complete SVG documents one after another, with the literal separator line ===SCENE=== between them. "
+        "Inside each SVG, put a short scene description in its first <title> element. Use compact SVG markup and single quotes for XML attributes. "
+        "Keep each illustration visually rich but concise so all four fit in one response. "
         "Story description: " + req.prompt
     )
     headers = {
@@ -428,21 +426,20 @@ async def animate_from_description(req: VideoAnimateRequest):
         if response.is_error:
             detail = data.get("error", {}).get("message", "Error de Claude")
             raise HTTPException(response.status_code, "Claude: " + detail[:500])
-        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+        raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
         if not raw:
             raise ValueError("Claude respondió sin texto (stop_reason=" + str(data.get("stop_reason")) + ").")
-        # Accept plain JSON, JSON inside Markdown fences, or explanatory text around the object.
-        cleaned = re.sub(r"^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$", "", raw, flags=re.I).strip()
-        try:
-            scene_data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            start, finish = cleaned.find("{"), cleaned.rfind("}")
-            if start < 0 or finish <= start:
-                raise ValueError("Claude no devolvió un objeto JSON. Respuesta: " + cleaned[:240])
-            scene_data = json.loads(cleaned[start:finish + 1])
-        scenes = scene_data.get("scenes", [])
-        if len(scenes) != 4:
-            raise ValueError("Claude debe devolver exactamente 4 escenas.")
+        if data.get("stop_reason") == "max_tokens":
+            raise ValueError("Claude agotó el límite de salida antes de terminar las ilustraciones. Reduce el texto del guion o inténtalo otra vez.")
+        # Parse SVG documents directly; this avoids fragile JSON escaping of XML attributes and path data.
+        svg_documents = re.findall(r"<svg\\b[\\s\\S]*?</svg>", raw, flags=re.I)
+        if len(svg_documents) != 4:
+            raise ValueError("Claude devolvió " + str(len(svg_documents)) + " SVG completos; se necesitan 4. Inténtalo otra vez.")
+        scenes = []
+        for index, svg in enumerate(svg_documents):
+            title_match = re.search(r"<title[^>]*>([\\s\\S]*?)</title>", svg, flags=re.I)
+            description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
+            scenes.append({"description": description[:300], "svg": svg})
     except HTTPException:
         raise
     except Exception as exc:
