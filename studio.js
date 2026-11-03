@@ -51,7 +51,8 @@
       </div>
       <h3 class="sectiontitle">Biblioteca</h3><div id="svVideos" class="grid"><div class="empty">Cargando videos...</div></div>`;
     document.querySelector("#stCreate").onclick = createTask;
-    document.querySelector("#svUpload").onclick = uploadVideo;\n    document.querySelector("#vrCreate").onclick = renderScriptVideo;
+    document.querySelector("#svUpload").onclick = uploadVideo;
+    document.querySelector("#vrCreate").onclick = renderScriptVideo;
     await Promise.all([loadTasks(),loadVideos()]);
   };
 
