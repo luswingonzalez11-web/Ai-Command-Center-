@@ -394,18 +394,6 @@ async def animate_from_description(req: VideoAnimateRequest):
         raise HTTPException(503, "Falta una dependencia del motor 2D: " + str(exc))
 
     model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
-    prompt = (
-        "Create exactly 4 distinct, coherent hand-drawn 2D cartoon/graphic-novel illustrations for a vertical horror short. "
-        "Draw actual environments, props and characters with layered backgrounds, strong silhouettes, expressive poses, "
-        "consistent character designs, cinematic lighting and detailed composition. Never make text cards or abstract placeholders. "
-        "Each illustration must be a complete standalone SVG with width='720', height='1280', viewBox='0 0 720 1280'. "
-        "Use only safe vector elements: svg, title, desc, defs, linearGradient, radialGradient, stop, g, path, rect, circle, ellipse, line, polygon, polyline. "
-        "No scripts, foreignObject, external URLs, external images, embedded animation, or Markdown. "
-        "IMPORTANT OUTPUT FORMAT: Do NOT return JSON. Return exactly four complete SVG documents one after another, with the literal separator line ===SCENE=== between them. "
-        "Inside each SVG, put a short scene description in its first <title> element. Use compact SVG markup and single quotes for XML attributes. "
-        "Keep each illustration visually rich but concise so all four fit in one response. "
-        "Story description: " + req.prompt
-    )
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -415,31 +403,48 @@ async def animate_from_description(req: VideoAnimateRequest):
     if workspace_id:
         headers["anthropic-workspace-id"] = workspace_id
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers=headers,
-                json={"model": model, "max_tokens": 12000,
-                      "messages": [{"role": "user", "content": prompt}]}
-            )
-        data = response.json()
-        if response.is_error:
-            detail = data.get("error", {}).get("message", "Error de Claude")
-            raise HTTPException(response.status_code, "Claude: " + detail[:500])
-        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
-        if not raw:
-            raise ValueError("Claude respondió sin texto (stop_reason=" + str(data.get("stop_reason")) + ").")
-        if data.get("stop_reason") == "max_tokens":
-            raise ValueError("Claude agotó el límite de salida antes de terminar las ilustraciones. Reduce el texto del guion o inténtalo otra vez.")
-        # Parse SVG documents directly; this avoids fragile JSON escaping of XML attributes and path data.
-        svg_documents = re.findall(r"<svg\b[\s\S]*?</svg>", raw, flags=re.I)
-        if len(svg_documents) != 4:
-            raise ValueError("Claude devolvió " + str(len(svg_documents)) + " SVG completos; se necesitan 4. Inténtalo otra vez.")
+        # Generate one illustration per request. This avoids truncating four large SVGs
+        # in a single Claude response and makes each scene easier to validate.
         scenes = []
-        for index, svg in enumerate(svg_documents):
-            title_match = re.search(r"<title[^>]*>([\s\S]*?)</title>", svg, flags=re.I)
-            description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
-            scenes.append({"description": description[:300], "svg": svg})
+        async with httpx.AsyncClient(timeout=180) as client:
+            for index in range(4):
+                scene_prompt = (
+                    "Create ONE complete, original, hand-drawn 2D cartoon/graphic-novel illustration "
+                    "for scene " + str(index + 1) + " of 4 in a vertical horror short. "
+                    "Overall story: " + req.prompt[:2500] + "\\n"
+                    "Illustration requirements: show a clear cinematic moment with an environment, "
+                    "at least one recognizable object or character relevant to this scene, layered shapes, "
+                    "strong silhouettes and moody lighting. Keep the SVG visually clear, not overly detailed. "
+                    "Return ONLY one standalone SVG, no Markdown, no JSON, no explanations. "
+                    "Use width='720' height='1280' viewBox='0 0 720 1280'. "
+                    "Use simple vector elements only: svg, title, desc, defs, linearGradient, radialGradient, "
+                    "stop, g, path, rect, circle, ellipse, line, polygon, polyline. "
+                    "No scripts, foreignObject, external URLs or external images. "
+                    "Keep the SVG compact, ideally under 2500 output tokens. "
+                    "Include a short descriptive <title> inside the SVG."
+                )
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    json={"model": model, "max_tokens": 3500,
+                          "messages": [{"role": "user", "content": scene_prompt}]}
+                )
+                data = response.json()
+                if response.is_error:
+                    detail = data.get("error", {}).get("message", "Error de Claude")
+                    raise HTTPException(response.status_code, "Claude: " + detail[:500])
+                raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+                if not raw:
+                    raise ValueError("Claude no devolvió la ilustración de la escena " + str(index + 1) + ".")
+                if data.get("stop_reason") == "max_tokens":
+                    raise ValueError("La ilustración " + str(index + 1) + " quedó demasiado larga. Vuelve a intentarlo.")
+                svg_match = re.search(r"<svg\\b[\\s\\S]*?</svg>", raw, flags=re.I)
+                if not svg_match:
+                    raise ValueError("Claude no devolvió un SVG completo para la escena " + str(index + 1) + ".")
+                svg = svg_match.group(0)
+                title_match = re.search(r"<title[^>]*>([\\s\\S]*?)</title>", svg, flags=re.I)
+                description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
+                scenes.append({"description": description[:300], "svg": svg})
     except HTTPException:
         raise
     except Exception as exc:
