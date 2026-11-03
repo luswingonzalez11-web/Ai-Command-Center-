@@ -26,8 +26,31 @@ const agents = [
 let active = "core";
 let messages = [];
 let tasks = [];
+let mode = localStorage.getItem("jarvis_mode") || "individual";
+let paused = localStorage.getItem("jarvis_paused") === "true";
+
+let agentStates;
+try {
+  agentStates = JSON.parse(localStorage.getItem("jarvis_agents")) || {};
+} catch {
+  agentStates = {};
+}
+
+agents.forEach(a => {
+  if (typeof agentStates[a[2]] !== "boolean") agentStates[a[2]] = true;
+});
 
 const $ = s => document.querySelector(s);
+
+function saveControls() {
+  localStorage.setItem("jarvis_agents", JSON.stringify(agentStates));
+  localStorage.setItem("jarvis_mode", mode);
+  localStorage.setItem("jarvis_paused", String(paused));
+}
+
+function enabledAgents() {
+  return agents.filter(a => agentStates[a[2]]);
+}
 
 function nav() {
   $("#nav").innerHTML = modules.map(([id, ic, n]) =>
@@ -47,10 +70,63 @@ function card(title, body) {
   return `<div class="card"><h3>${title}</h3>${body}</div>`;
 }
 
+function agentPanel() {
+  return `
+    <div class="agents">
+      ${agents.map(a => `
+        <div class="agent">
+          <div class="row">
+            <b>${a[0]}</b>
+            <span class="pill ${agentStates[a[2]] ? "" : "warn"}">
+              ${agentStates[a[2]] ? "ON" : "OFF"}
+            </span>
+          </div>
+          <span class="tag">${a[1]}</span>
+          <p class="muted" style="font-size:11px">ID: ${a[2]}</p>
+          <button class="btn agent-toggle" data-agent="${a[2]}">
+            ${agentStates[a[2]] ? "Desactivar" : "Activar"}
+          </button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function controlPanel() {
+  return `
+    <div class="card">
+      <div class="row">
+        <div>
+          <h2 style="margin:0">AI Team Control</h2>
+          <p class="muted">Control de los cinco agentes.</p>
+        </div>
+        <span class="pill ${paused ? "warn" : ""}">
+          ${paused ? "PAUSADO" : "ACTIVO"}
+        </span>
+      </div>
+
+      <div class="formrow">
+        <label for="modeSelect">Modo de operación</label>
+        <select id="modeSelect">
+          <option value="individual" ${mode === "individual" ? "selected" : ""}>Individual Mode</option>
+          <option value="team" ${mode === "team" ? "selected" : ""}>TEAM MODE</option>
+        </select>
+        <button class="btn ${paused ? "primary" : ""}" id="pauseToggle">
+          ${paused ? "▶ Reanudar solicitudes" : "Ⅱ Pausar nuevas solicitudes"}
+        </button>
+      </div>
+
+      <h3 class="sectiontitle">Agentes conectados</h3>
+      ${agentPanel()}
+      <p class="footer">Los interruptores se guardan en este navegador. No desconectan las API del servidor.</p>
+    </div>
+  `;
+}
+
 function render() {
   nav();
 
-  let m = modules.find(x => x[0] === active);
+  const m = modules.find(x => x[0] === active);
   $("#pageTitle").textContent = m[2];
 
   let html = "";
@@ -67,22 +143,14 @@ function render() {
       </div>
 
       <div class="grid">
-        ${card("AGENTES", `<div class="metric">05</div>`)}
+        ${card("AGENTES ACTIVOS", `<div class="metric">${enabledAgents().length}/5</div>`)}
         ${card("TAREAS", `<div class="metric">${tasks.length}</div>`)}
         ${card("MENSAJES", `<div class="metric">${messages.length}</div>`)}
-        ${card("SEGURIDAD", `<div class="metric" style="font-size:19px">ACTIVA*</div>`)}
+        ${card("SISTEMA", `<div class="metric" style="font-size:19px">${paused ? "PAUSADO" : "ACTIVO"}</div>`)}
       </div>
 
-      <h3 class="sectiontitle">AI TEAM</h3>
-      <div class="agents">
-        ${agents.map(a => `
-          <div class="agent">
-            <b>${a[0]}</b>
-            <span class="tag">${a[1]}</span>
-            <p class="muted" style="font-size:11px">Proveedor: ${a[2]}</p>
-          </div>
-        `).join("")}
-      </div>
+      <h3 class="sectiontitle">AI TEAM CONTROL</h3>
+      ${controlPanel()}
 
       <h3 class="sectiontitle">Tareas recientes</h3>
       ${taskList()}
@@ -93,28 +161,40 @@ function render() {
       <div class="card">
         <div class="eyebrow">MULTI-AGENT INTERFACE</div>
         <h2>Habla con JARVIS</h2>
-        <p class="muted">Elige el proveedor que procesará tu solicitud.</p>
+        <p class="muted">Selecciona una IA o activa TEAM MODE.</p>
 
         <div class="formrow">
-          <select id="provider">
-            ${agents.map(a =>
-              `<option value="${a[2]}">${a[0]}</option>`
-            ).join("")}
+          <label for="chatMode">Modo</label>
+          <select id="chatMode">
+            <option value="individual" ${mode === "individual" ? "selected" : ""}>Individual Mode</option>
+            <option value="team" ${mode === "team" ? "selected" : ""}>TEAM MODE</option>
           </select>
 
-          <textarea id="prompt" placeholder="Escribe tu objetivo o pregunta..."></textarea>
+          <div id="individualPicker" class="${mode === "team" ? "hidden" : ""}">
+            <label for="provider">Proveedor</label>
+            <select id="provider">
+              ${agents.map(a => `
+                <option value="${a[2]}" ${agentStates[a[2]] ? "" : "disabled"}>
+                  ${a[0]} ${agentStates[a[2]] ? "" : "(OFF)"}
+                </option>
+              `).join("")}
+            </select>
+          </div>
 
-          <button class="btn primary" id="send">Enviar solicitud ↗</button>
+          <textarea id="prompt" placeholder="Escribe tu objetivo o pregunta..."></textarea>
+          <button class="btn primary" id="send" ${paused ? "disabled" : ""}>
+            ${paused ? "Sistema pausado" : "Enviar solicitud ↗"}
+          </button>
+          <p class="muted" id="chatStatus">${paused ? "Reanuda el sistema para enviar solicitudes." : "Listo para recibir instrucciones."}</p>
         </div>
 
         <div class="chatlog" id="chatlog">
           ${messages.map(x => `
-            <div class="bubble user">
-              <b>Tú</b><br>${escapeHtml(x.q)}
-            </div>
-            <div class="bubble">
-              <b>${escapeHtml(x.p)}</b><br>${escapeHtml(x.a)}
-            </div>
+            <div class="bubble user"><b>Tú</b><br>${escapeHtml(x.q)}</div>
+            ${x.results ? x.results.map(r => `
+              <div class="bubble"><b>${escapeHtml(r.name)}</b><br>${escapeHtml(r.answer)}</div>
+            `).join("") : ""}
+            <div class="bubble"><b>${escapeHtml(x.p)}</b><br>${escapeHtml(x.a)}</div>
           `).join("")}
         </div>
       </div>
@@ -129,7 +209,7 @@ function render() {
           <input id="proposal" placeholder="Escribe una propuesta...">
           <button class="btn primary" id="addProposal">Crear propuesta</button>
         </div>
-        <div id="proposalList" class="empty">No hay propuestas en esta sesión.</div>
+        <div id="proposalList">${taskList()}</div>
       </div>
     `;
 
@@ -143,13 +223,11 @@ function render() {
         </div>
         <div class="reactor">▣</div>
       </div>
-
       <div class="grid">
         ${["Generar idea", "Escribir guion", "Storyboard", "Paquete Shorts"]
           .map(x => card(x, `<button class="btn action" data-task="${x}">Crear tarea</button>`))
           .join("")}
       </div>
-
       <h3 class="sectiontitle">Cola de producción</h3>
       ${taskList()}
     `;
@@ -162,7 +240,6 @@ function render() {
         ${card("Viral Score", `<div class="metric">—</div>`)}
         ${card("Retención", `<div class="metric">—</div>`)}
       </div>
-      <p class="muted">Las métricas reales aparecerán después de autorizar las cuentas.</p>
     `;
 
   } else if (active === "evolution" || active === "security") {
@@ -173,7 +250,7 @@ function render() {
     html = `
       <div class="card">
         <h2>${m[2]}</h2>
-        <p class="muted">Herramientas de análisis y revisión. Las acciones críticas requieren aprobación humana.</p>
+        <p class="muted">Herramientas de análisis. Las acciones críticas requieren aprobación humana.</p>
         <div class="list">
           ${items.map(x => `
             <div class="listitem">
@@ -189,25 +266,23 @@ function render() {
     html = `
       <div class="card">
         <h2>Memoria de JARVIS</h2>
-        <p class="muted">Tareas registradas en esta sesión de navegador.</p>
+        <p class="muted">Tareas registradas en esta sesión.</p>
         ${taskList()}
       </div>
     `;
 
   } else if (active === "settings") {
     html = `
+      ${controlPanel()}
       <div class="card">
-        <h2>Configuración del sistema</h2>
-        <p class="muted">Controles iniciales del espacio de trabajo.</p>
+        <h2>Developer Access</h2>
+        <p class="muted">Permisos previstos para ChatGPT y Claude.</p>
         <div class="list">
-          ${agents.map(a => `
-            <div class="listitem">
-              <span>${a[0]} · ${a[1]}</span>
-              <span class="pill">Proveedor: ${a[2]}</span>
-            </div>
-          `).join("")}
+          <div class="listitem"><b>ChatGPT</b><span class="pill">Orquestador / propuestas</span></div>
+          <div class="listitem"><b>Claude</b><span class="pill">Desarrollo / propuestas</span></div>
+          <div class="listitem"><b>Gemini, DeepSeek y Grok</b><span class="pill warn">Solo análisis</span></div>
         </div>
-        <p class="footer">Los permisos y la autonomía reales deben validarse en el servidor.</p>
+        <p class="footer">Developer Access todavía requiere conexión autenticada con el backend. Esta pantalla no concede permisos de servidor.</p>
       </div>
     `;
 
@@ -215,7 +290,7 @@ function render() {
     html = `
       <div class="card">
         <h2>Conexiones API</h2>
-        <p class="muted">Estado consultado desde el backend. Las claves nunca se muestran en la web.</p>
+        <p class="muted">Las claves nunca se muestran en la web.</p>
         <button class="btn" id="checkProviders">Comprobar conexiones</button>
         <div id="providers" class="list" style="margin-top:15px">
           <div class="empty">Pulsa para consultar el backend.</div>
@@ -225,23 +300,48 @@ function render() {
   }
 
   $("#content").innerHTML = html + `
-    <div class="footer">
-      JARVIS CORE 2.0 · Web MVP · *Estado visual, no auditoría certificada.
-    </div>
+    <div class="footer">JARVIS CORE 3.0 · Multi-Agent Control MVP</div>
   `;
 
   const send = $("#send");
   if (send) send.onclick = sendChat;
 
+  const chatMode = $("#chatMode");
+  if (chatMode) chatMode.onchange = () => {
+    mode = chatMode.value;
+    saveControls();
+    render();
+  };
+
+  const modeSelect = $("#modeSelect");
+  if (modeSelect) modeSelect.onchange = () => {
+    mode = modeSelect.value;
+    saveControls();
+    render();
+  };
+
+  const pauseButton = $("#pauseToggle");
+  if (pauseButton) pauseButton.onclick = () => {
+    paused = !paused;
+    saveControls();
+    render();
+  };
+
+  document.querySelectorAll(".agent-toggle").forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.agent;
+      agentStates[id] = !agentStates[id];
+      saveControls();
+      render();
+    };
+  });
+
   const add = $("#addProposal");
   if (add) add.onclick = () => {
-    let v = $("#proposal").value.trim();
-
+    const v = $("#proposal").value.trim();
     if (v) {
       tasks.unshift("Propuesta: " + v);
-      $("#proposalList").className = "list";
-      $("#proposalList").innerHTML = taskList();
-      $("#proposal").value = "";
+      render();
     }
   };
 
@@ -279,54 +379,113 @@ function escapeHtml(s) {
   }[c]));
 }
 
-async function sendChat() {
-  let q = $("#prompt").value.trim();
-  let p = $("#provider").value;
+async function askAgent(provider, message) {
+  const r = await fetch(API_BASE + "/api/chat", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({provider, message})
+  });
 
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || "Error de API");
+  return d.answer || "Sin respuesta del proveedor.";
+}
+
+async function sendChat() {
+  if (paused) return;
+
+  const q = $("#prompt").value.trim();
   if (!q) return;
 
-  let b = $("#send");
-  b.disabled = true;
-  b.textContent = "Procesando...";
+  const selectedMode = $("#chatMode").value;
+  const send = $("#send");
+  const status = $("#chatStatus");
+
+  let results = [];
+  let finalAnswer = "";
+  let finalName = "";
+
+  send.disabled = true;
+  send.textContent = "Procesando...";
+  status.textContent = "JARVIS está trabajando...";
 
   try {
-    const r = await fetch(API_BASE + "/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        provider: p,
-        message: q
-      })
-    });
+    if (selectedMode === "individual") {
+      const provider = $("#provider").value;
+      if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
 
-    const d = await r.json();
+      finalAnswer = await askAgent(provider, q);
+      finalName = agents.find(a => a[2] === provider)?.[0] || provider;
 
-    if (!r.ok) {
-      throw new Error(d.detail || "Error de API");
+    } else {
+      const team = enabledAgents();
+      if (team.length < 2) {
+        throw new Error("Activa al menos dos agentes para TEAM MODE.");
+      }
+
+      if (!agentStates.openai) {
+        throw new Error("Activa ChatGPT para que coordine y sintetice el equipo.");
+      }
+
+      status.textContent = `Consultando a ${team.length} agentes...`;
+
+      const responses = await Promise.allSettled(
+        team.map(async a => ({
+          name: a[0],
+          id: a[2],
+          answer: await askAgent(a[2], q)
+        }))
+      );
+
+      results = responses.map((r, i) => {
+        if (r.status === "fulfilled") return r.value;
+        return {
+          name: team[i][0],
+          id: team[i][2],
+          answer: "Error: " + r.reason.message
+        };
+      });
+
+      const usable = results.filter(r => !r.answer.startsWith("Error:"));
+      if (!usable.length) throw new Error("Ningún agente pudo responder.");
+
+      status.textContent = "ChatGPT está preparando la síntesis del equipo...";
+
+      const report = usable.map(r =>
+        `AGENTE: ${r.name}\nRESPUESTA:\n${r.answer}`
+      ).join("\n\n----------------\n\n");
+
+      finalAnswer = await askAgent(
+        "openai",
+        "Actúa como coordinador de JARVIS CORE. Compara las respuestas del equipo, identifica acuerdos, contradicciones y errores. Después entrega una conclusión clara y recomendaciones.\n\nSOLICITUD ORIGINAL:\n" +
+        q +
+        "\n\nRESPUESTAS DEL EQUIPO:\n" +
+        report
+      );
+
+      finalName = "ChatGPT · Síntesis del equipo";
     }
 
-    messages.unshift({
-      q,
-      p: agents.find(a => a[2] === p)?.[0] || p,
-      a: d.answer || "El servidor no devolvió una respuesta."
-    });
-
   } catch (e) {
-    messages.unshift({
-      q,
-      p: agents.find(a => a[2] === p)?.[0] || p,
-      a: "Error de conexión: " + e.message
-    });
+    finalAnswer = "Error: " + e.message;
+    finalName = "JARVIS CORE";
   }
 
+  messages.unshift({
+    q,
+    p: finalName,
+    a: finalAnswer,
+    results
+  });
+
   render();
+
+  const newStatus = $("#chatStatus");
+  if (newStatus) newStatus.textContent = "Solicitud finalizada.";
 }
 
 async function loadProviders() {
-  let box = $("#providers");
-
+  const box = $("#providers");
   box.innerHTML = '<div class="empty">Consultando...</div>';
 
   try {
@@ -337,7 +496,6 @@ async function loadProviders() {
 
     box.innerHTML = d.map(x => {
       const name = agents.find(a => a[2] === x.id)?.[0] || x.id;
-
       return `
         <div class="listitem">
           <b>${escapeHtml(name)}</b>
@@ -349,11 +507,7 @@ async function loadProviders() {
     }).join("");
 
   } catch (e) {
-    box.innerHTML = `
-      <div class="empty">
-        No se pudo conectar: ${escapeHtml(e.message)}
-      </div>
-    `;
+    box.innerHTML = `<div class="empty">No se pudo conectar: ${escapeHtml(e.message)}</div>`;
   }
 }
 
