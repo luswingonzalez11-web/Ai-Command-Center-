@@ -62,7 +62,7 @@ function boardStatus(p) {
   if (no >= 3) return "Rechazada por mayoría";
   return "Votación en curso";
 }
-const mode = localStorage.getItem("jarvis_mode") || "individual";
+let mode = localStorage.getItem("jarvis_mode") || "individual";
 let paused = localStorage.getItem("jarvis_paused") === "true";
 
 let agentStates;
