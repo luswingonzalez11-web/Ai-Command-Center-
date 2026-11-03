@@ -493,8 +493,8 @@ async def animate_from_description(req: VideoAnimateRequest):
                     # Allow that exact namespace, but reject executable or externally-loaded content.
                     if (
                         re.search(r"<\s*script\b|<\s*foreignobject\b|\bon\w+\s*=", lowered)
-                        or re.search(r"(?:href|src)\s*=\s*["']\s*(?:https?:|//|data:|file:)", lowered)
-                        or re.search(r"url\(\s*["']?\s*(?:https?:|//|data:|file:)", lowered)
+                        or re.search(r"""(?:href|src)\s*=\s*["']\s*(?:https?:|//|data:|file:)""", lowered)
+                        or re.search(r"""url\(\s*["']?\s*(?:https?:|//|data:|file:)""", lowered)
                         or re.search(r"<!entity|<!doctype", lowered)
                     ):
                         raise ValueError("Claude devolvió SVG con contenido externo o no permitido.")
