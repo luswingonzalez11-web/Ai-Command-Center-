@@ -125,7 +125,7 @@ function agentPanel() {
           <div class="row">
             <b>${a[0]}</b>
             <span class="pill ${agentStates[a[2]] ? "" : "warn"}">
-              ${agentStates[a[2]] ? "ON" : "OFF"}
+              ${agentStates[a[2]] ? "HABILITADO" : "DESACTIVADO"}
             </span>
           </div>
           <span class="tag">${a[1]}</span>
@@ -163,9 +163,9 @@ function controlPanel() {
         </button>
       </div>
 
-      <h3 class="sectiontitle">Agentes conectados</h3>
+      <h3 class="sectiontitle">Agentes habilitados</h3>
       ${agentPanel()}
-      <p class="footer">Los interruptores se guardan en este navegador. No desconectan las API del servidor.</p>
+      <p class="footer">Habilitar un agente no significa que su API esté conectada. Los interruptores se guardan en este navegador y no desconectan las API del servidor.</p>
     </div>
   `;
 }
@@ -222,7 +222,7 @@ function render() {
             <select id="provider">
               ${agents.map(a => `
                 <option value="${a[2]}" ${agentStates[a[2]] ? "" : "disabled"}>
-                  ${a[0]} ${agentStates[a[2]] ? "" : "(OFF)"}
+                  ${a[0]} ${agentStates[a[2]] ? "" : "(DESACTIVADO)"}
                 </option>
               `).join("")}
             </select>
