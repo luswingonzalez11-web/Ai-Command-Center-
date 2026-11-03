@@ -404,8 +404,8 @@ async def animate_from_description(req: VideoAnimateRequest):
         "(path, rect, circle, ellipse, line, polygon, polyline, g, defs, linearGradient, radialGradient, stop), "
         "no scripts, no foreignObject, no external images/fonts/URLs, and no embedded animation. "
         "Use very little visible text, only if naturally present in the scene. "
-        "Return ONLY valid JSON: {\\\"scenes\\\":[{\\\"description\\\":\\\"short scene action\\\",\\\"svg\\\":\\\"complete SVG markup\\\"}, ...]}. "
-        "Exactly 4 scenes, each a complete SVG with viewBox='0 0 720 1280', width='720', height='1280'. "
+        "Return only a JSON object, not a Markdown code block, with this exact structure: " + '{ "scenes": [ { "description": "short scene action", "svg": "complete SVG markup" } ] }. "
+        "Exactly 4 scenes, each a complete SVG with viewBox='0 0 720 1280', width='720', height='1280'. Keep each SVG compact but visually detailed. "
         "Story description: " + req.prompt
     )
     headers = {
@@ -428,11 +428,18 @@ async def animate_from_description(req: VideoAnimateRequest):
         if response.is_error:
             detail = data.get("error", {}).get("message", "Error de Claude")
             raise HTTPException(response.status_code, "Claude: " + detail[:500])
-        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
-        match = re.search(r"\{.*\}", raw, re.S)
-        if not match:
-            raise ValueError("Claude no devolvió el JSON de escenas.")
-        scene_data = json.loads(match.group(0))
+        raw = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+        if not raw:
+            raise ValueError("Claude respondió sin texto (stop_reason=" + str(data.get("stop_reason")) + ").")
+        # Accept plain JSON, JSON inside Markdown fences, or explanatory text around the object.
+        cleaned = re.sub(r"^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$", "", raw, flags=re.I).strip()
+        try:
+            scene_data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            start, finish = cleaned.find("{"), cleaned.rfind("}")
+            if start < 0 or finish <= start:
+                raise ValueError("Claude no devolvió un objeto JSON. Respuesta: " + cleaned[:240])
+            scene_data = json.loads(cleaned[start:finish + 1])
         scenes = scene_data.get("scenes", [])
         if len(scenes) != 4:
             raise ValueError("Claude debe devolver exactamente 4 escenas.")
