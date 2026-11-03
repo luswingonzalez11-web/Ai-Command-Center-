@@ -262,11 +262,41 @@ def render_script_video(req: VideoRenderRequest):
         target.unlink(missing_ok=True)
         raise HTTPException(500, "No se pudo crear el MP4: " + str(exc)[:400])
 
+    # Export a synchronized SRT subtitle track alongside the MP4.
+    subtitle_name = Path(filename).with_suffix(".srt").name
+    subtitle_path = RENDER_DIR / subtitle_name
+    def srt_time(seconds):
+        whole = int(seconds)
+        millis = int(round((seconds - whole) * 1000))
+        if millis == 1000:
+            whole += 1
+            millis = 0
+        hours, rem = divmod(whole, 3600)
+        minutes, secs = divmod(rem, 60)
+        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+    with subtitle_path.open("w", encoding="utf-8") as srt:
+        for index, scene in enumerate(scenes):
+            start = index * req.seconds_per_scene
+            end = start + req.seconds_per_scene
+            srt.write(f"{index + 1}\\n{srt_time(start)} --> {srt_time(end)}\\n{scene}\\n\\n")
+
     return {
         "title": req.title, "filename": filename, "scenes": len(scenes),
         "duration_seconds": len(scenes) * req.seconds_per_scene,
-        "download_url": "/api/studio/renders/" + filename
+        "download_url": "/api/studio/renders/" + filename,
+        "subtitle_url": "/api/studio/subtitles/" + subtitle_name
     }
+
+
+@router.get("/subtitles/{filename}")
+def download_subtitles(filename: str):
+    from fastapi.responses import FileResponse
+    if not filename.endswith(".srt") or Path(filename).name != filename:
+        raise HTTPException(400, "Nombre de archivo no válido.")
+    path = RENDER_DIR / filename
+    if not path.is_file():
+        raise HTTPException(404, "Subtítulos no encontrados.")
+    return FileResponse(path, media_type="application/x-subrip", filename=filename)
 
 
 @router.get("/renders/{filename}")
