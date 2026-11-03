@@ -12,7 +12,8 @@ const modules = [
   ["security", "⬡", "Anti-Hack"],
   ["memory", "▤", "Memoria"],
   ["settings", "⚙", "Sistema"],
-  ["connections", "⌘", "Conexiones"]
+  ["connections", "⌘", "Conexiones"],
+  ["performance", "◷", "Rendimiento"]
 ];
 
 const NOTIFICATION_KEY = "jarvis_notifications_v1";
@@ -352,6 +353,8 @@ function render() {
       </div>
     `;
 
+  } else if (active === "performance") {
+    html = '<div class="card"><div class="row"><div><h2>AI Performance & Usage</h2><p class="muted">Latencia, tokens y actividad por agente.</p></div><button class="btn" id="refreshUsage">Actualizar</button></div><div id="usageDashboard"><div class="empty">Cargando métricas...</div></div></div>';
   } else if (active === "settings") {
     html = `
       ${controlPanel()}
@@ -391,7 +394,8 @@ function render() {
     security: "Defensa del sistema · auditoría, alertas y controles de seguridad.",
     memory: "Registro operativo local · actividad y elementos de trabajo.",
     settings: "Configuración del entorno · permisos y comportamiento del equipo.",
-    connections: "Estado de proveedores · diagnóstico de conectividad API."
+    connections: "Estado de proveedores · diagnóstico de conectividad API.",
+    performance: "Observabilidad · latencia, consumo de tokens y actividad por agente."
   };
   const moduleIndex = String(modules.findIndex(x => x[0] === active) + 1).padStart(2, "0");
   const intro = `
@@ -475,6 +479,9 @@ function render() {
 
   const check = $("#checkProviders");
   if (check) check.onclick = loadProviders;
+  const refreshUsage = $("#refreshUsage");
+  if (refreshUsage) refreshUsage.onclick = loadUsageMetrics;
+  if (active === "performance") loadUsageMetrics();
 }
 
 function taskList() {
@@ -517,7 +524,8 @@ async function executeTask(task, button) {
   const request = `Eres un agente de AI Command Center. Atiende esta tarea y entrega un resultado útil, concreto y completo. Si falta información, indica tus supuestos y pregunta solo lo imprescindible. No afirmes que has publicado, desplegado, guardado o ejecutado acciones externas que no hayas realizado.\\n\\nTAREA: ${task}`;
 
   try {
-    const answer = await askAgent(provider, request);
+    const response = await askAgent(provider, request, {task_id: "task-" + Date.now(), request_type: "task"});
+    const answer = response.answer || "Sin respuesta del proveedor.";
     const agentName = agents.find(a => a[2] === provider)?.[0] || provider;
     tasks.unshift(task + " · respuesta recibida");
     messages.unshift({q: "Nueva tarea: " + task, p: agentName, a: answer, results: []});
@@ -536,16 +544,16 @@ async function executeTask(task, button) {
   }
 }
 
-async function askAgent(provider, message) {
+async function askAgent(provider, message, tracking = {}) {
   const r = await fetch(API_BASE + "/api/chat", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({provider, message})
+    body: JSON.stringify({provider, message, ...tracking})
   });
 
   const d = await r.json();
   if (!r.ok) throw new Error(d.detail || "Error de API");
-  return d.answer || "Sin respuesta del proveedor.";
+  return d;
 }
 
 async function sendChat() {
@@ -571,7 +579,8 @@ async function sendChat() {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
 
-      finalAnswer = await askAgent(provider, q);
+      const response = await askAgent(provider, q, {conversation_id: "chat-" + Date.now(), request_type: "chat"});
+      finalAnswer = response.answer || "Sin respuesta del proveedor.";
       finalName = agents.find(a => a[2] === provider)?.[0] || provider;
 
     } else {
@@ -590,7 +599,7 @@ async function sendChat() {
         team.map(async a => ({
           name: a[0],
           id: a[2],
-          answer: await askAgent(a[2], q)
+          response: await askAgent(a[2], q, {conversation_id: "team-" + Date.now(), request_type: "team"})
         }))
       );
 
@@ -603,6 +612,7 @@ async function sendChat() {
         };
       });
 
+      results = results.map(r => r.response ? {...r, answer: r.response.answer || "Sin respuesta.", metrics: r.response.metrics} : r);
       const usable = results.filter(r => !r.answer.startsWith("Error:"));
       if (!usable.length) throw new Error("Ningún agente pudo responder.");
 
@@ -612,7 +622,7 @@ async function sendChat() {
         `AGENTE: ${r.name}\nRESPUESTA:\n${r.answer}`
       ).join("\n\n----------------\n\n");
 
-      finalAnswer = await askAgent(
+      const synthesis = await askAgent(
         "openai",
         "Actúa como coordinador de JARVIS CORE. Compara las respuestas del equipo, identifica acuerdos, contradicciones y errores. Después entrega una conclusión clara y recomendaciones.\n\nSOLICITUD ORIGINAL:\n" +
         q +
@@ -620,6 +630,7 @@ async function sendChat() {
         report
       );
 
+      finalAnswer = synthesis.answer || "Sin síntesis del equipo.";
       finalName = "ChatGPT · Síntesis del equipo";
     }
 
@@ -666,6 +677,32 @@ async function loadProviders() {
 
   } catch (e) {
     box.innerHTML = `<div class="empty">No se pudo conectar: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadUsageMetrics() {
+  const box = $("#usageDashboard");
+  if (!box) return;
+  box.innerHTML = '<div class="empty">Consultando métricas...</div>';
+  try {
+    const r = await fetch(API_BASE + "/api/usage/summary");
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "No se pudieron cargar las métricas.");
+    const t = d.totals;
+    const fmt = n => n == null ? "—" : Number(n).toLocaleString("es-US");
+    let html = '<div class="usage-grid">' +
+      '<div class="usage-stat"><small>Latencia promedio</small><strong>' + (t.average_latency_ms == null ? "—" : (t.average_latency_ms/1000).toFixed(2)+" s") + '</strong></div>' +
+      '<div class="usage-stat"><small>Tokens registrados</small><strong>' + fmt(t.tokens) + '</strong><span>Entrada ' + fmt(t.input_tokens) + ' · Salida ' + fmt(t.output_tokens) + '</span></div>' +
+      '<div class="usage-stat"><small>Solicitudes</small><strong>' + fmt(t.requests) + '</strong><span>' + fmt(t.successful) + ' correctas · ' + fmt(t.failed) + ' fallidas</span></div>' +
+      '<div class="usage-stat"><small>Cobertura de tokens</small><strong>' + (t.requests ? Math.round(t.token_records/t.requests*100) : 0) + '%</strong><span>Reportados por proveedor</span></div></div>' +
+      '<h3 class="sectiontitle">Rendimiento por agente</h3><div class="list">';
+    html += d.by_provider.length ? d.by_provider.map(x => '<div class="listitem"><b>' + escapeHtml(x.provider) + '</b><span>' + fmt(x.average_latency_ms) + ' ms · ' + fmt(x.tokens) + ' tokens · ' + x.requests + ' solicitudes</span></div>').join("") : '<div class="empty">Todavía no hay solicitudes registradas.</div>';
+    html += '</div><h3 class="sectiontitle">Actividad reciente</h3><div class="list">';
+    html += d.recent.length ? d.recent.slice(0,20).map(x => '<div class="listitem"><span><b>' + escapeHtml(x.provider) + '</b> · ' + escapeHtml(x.model) + '<small class="muted" style="display:block">' + new Date(x.created_at).toLocaleString() + '</small></span><span>' + fmt(x.latency_ms) + ' ms · ' + (x.total_tokens == null ? 'tokens N/D' : fmt(x.total_tokens)+' tokens') + '</span></div>').join("") : '<div class="empty">Envía un chat o tarea para empezar a medir.</div>';
+    html += '</div><p class="footer">Ventana: últimas 500 solicitudes. Costos no estimados hasta configurar tarifas verificadas por modelo. Los tokens no disponibles se marcan como N/D.</p>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
   }
 }
 
