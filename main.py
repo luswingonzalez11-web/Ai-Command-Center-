@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -88,6 +89,9 @@ class ChatRequest(BaseModel):
     provider: str = Field(default="openai")
     message: str = Field(min_length=1, max_length=12000)
     model: Optional[str] = None
+    conversation_id: Optional[str] = None
+    task_id: Optional[str] = None
+    request_type: str = "chat"
 
 
 class TaskRequest(BaseModel):
@@ -405,6 +409,65 @@ def providers():
 # CHAT WITH SERVER IDENTITY
 # --------------------------------------------------
 
+async def save_usage_metric(metric: dict):
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not base or not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(base + "/rest/v1/ai_usage_metrics",
+                headers={"apikey": key, "Authorization": "Bearer " + key,
+                         "Content-Type": "application/json", "Prefer": "return=minimal"},
+                json=metric)
+    except Exception:
+        pass
+
+
+@app.get("/api/usage/summary")
+async def usage_summary():
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not base or not key:
+        raise HTTPException(503, "La analítica requiere configuración de Supabase.")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(base + "/rest/v1/ai_usage_metrics",
+                headers={"apikey": key, "Authorization": "Bearer " + key},
+                params={"select": "id,provider,model,request_type,latency_ms,input_tokens,output_tokens,total_tokens,token_source,success,created_at,conversation_id,task_id",
+                        "order": "created_at.desc", "limit": "500"})
+        if response.is_error:
+            raise HTTPException(502, "No se pudieron consultar las métricas.")
+        rows = response.json()
+        total = len(rows)
+        totals = {
+            "requests": total,
+            "successful": sum(1 for x in rows if x.get("success")),
+            "failed": sum(1 for x in rows if not x.get("success")),
+            "tokens": sum(x.get("total_tokens") or 0 for x in rows),
+            "input_tokens": sum(x.get("input_tokens") or 0 for x in rows),
+            "output_tokens": sum(x.get("output_tokens") or 0 for x in rows),
+            "average_latency_ms": round(sum(x.get("latency_ms") or 0 for x in rows) / total) if total else None,
+            "token_records": sum(1 for x in rows if x.get("total_tokens") is not None)
+        }
+        grouped = {}
+        for row in rows:
+            p = row["provider"]
+            g = grouped.setdefault(p, {"provider": p, "requests": 0, "tokens": 0, "latencies": []})
+            g["requests"] += 1
+            g["tokens"] += row.get("total_tokens") or 0
+            if row.get("latency_ms") is not None:
+                g["latencies"].append(row["latency_ms"])
+        by_provider = [{"provider": g["provider"], "requests": g["requests"], "tokens": g["tokens"],
+                        "average_latency_ms": round(sum(g["latencies"]) / len(g["latencies"])) if g["latencies"] else None}
+                       for g in grouped.values()]
+        return {"totals": totals, "by_provider": by_provider, "recent": rows[:100], "window": "latest_500_requests"}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "Error consultando analítica.")
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     name = req.provider.lower()
@@ -423,6 +486,8 @@ async def chat(req: ChatRequest):
 
     model = req.model or cfg["model"]
     system_prompt = build_agent_system_prompt(name)
+    started_at = time.perf_counter()
+    usage = {}
 
     try:
         async with httpx.AsyncClient(timeout=90) as client:
@@ -461,6 +526,7 @@ async def chat(req: ChatRequest):
                     )
 
                 answer = data["choices"][0]["message"]["content"]
+                usage = data.get("usage") or {}
 
             # CLAUDE
             elif cfg["kind"] == "claude":
@@ -507,6 +573,7 @@ async def chat(req: ChatRequest):
                     for item in data.get("content", [])
                     if item.get("type") == "text"
                 )
+                usage = data.get("usage") or {}
 
             # GEMINI
             else:
@@ -558,10 +625,27 @@ async def chat(req: ChatRequest):
                     for part in parts
                     if "text" in part
                 )
+                usage = data.get("usageMetadata") or {}
 
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", usage.get("promptTokenCount")))
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens", usage.get("candidatesTokenCount")))
+        total_tokens = usage.get("total_tokens", usage.get("totalTokenCount"))
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = int(input_tokens) + int(output_tokens)
+        metric = {
+            "conversation_id": req.conversation_id, "task_id": req.task_id,
+            "provider": name, "model": model, "request_type": req.request_type,
+            "latency_ms": latency_ms, "input_tokens": input_tokens,
+            "output_tokens": output_tokens, "total_tokens": total_tokens,
+            "token_source": "provider" if input_tokens is not None or output_tokens is not None else "unavailable",
+            "success": True
+        }
+        await save_usage_metric(metric)
         return {
             "provider": name,
             "model": model,
+            "metrics": metric,
             "system": "JARVIS CORE",
             "identity_loaded": True,
             "role": AGENT_ROLES[name].strip(),
