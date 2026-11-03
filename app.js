@@ -15,6 +15,29 @@ const modules = [
   ["connections", "⌘", "Conexiones"]
 ];
 
+const NOTIFICATION_KEY = "jarvis_notifications_v1";
+let notifications = [];
+try { notifications = JSON.parse(localStorage.getItem(NOTIFICATION_KEY)) || []; } catch { notifications = []; }
+
+function saveNotifications() {
+  localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(notifications.slice(0, 100)));
+}
+function notifySection(section, title) {
+  notifications.unshift({id: Date.now() + Math.random(), section, title, createdAt: new Date().toISOString(), read: false});
+  saveNotifications();
+  nav();
+}
+function unreadCount(section) {
+  return notifications.filter(n => n.section === section && !n.read).length;
+}
+function markNotificationsRead(section) {
+  let changed = false;
+  notifications.forEach(n => { if (n.section === section && !n.read) { n.read = true; changed = true; } });
+  if (changed) saveNotifications();
+}
+window.jarvisNotify = notifySection;
+window.jarvisMarkRead = markNotificationsRead;
+
 const agents = [
   ["ChatGPT", "Orquestador", "openai"],
   ["Claude", "Director creativo", "claude"],
@@ -53,19 +76,22 @@ function enabledAgents() {
 }
 
 function nav() {
-  $("#nav").innerHTML = modules.map(([id, ic, n]) =>
-    `<button class="navitem ${active === id ? "active" : ""}" data-id="${id}">${ic}　${n}</button>`
-  ).join("") + `<button class="navitem" id="studioNav">◉　AI Task & Video Studio</button>`;
+  $("#nav").innerHTML = modules.map(([id, ic, n]) => {
+    const count = unreadCount(id);
+    return `<button class="navitem ${active === id ? "active" : ""}" data-id="${id}">${ic}　${n}${count ? `<span class="navbadge">${count > 99 ? "99+" : count}</span>` : ""}</button>`;
+  }).join("") + `<button class="navitem" id="studioNav">◉　AI Task & Video Studio${unreadCount("studio") ? `<span class="navbadge">${unreadCount("studio")}</span>` : ""}</button>`;
 
   document.querySelectorAll(".navitem[data-id]").forEach(b => {
     b.onclick = () => {
       active = b.dataset.id;
+      markNotificationsRead(active);
       render();
       $("#sidebar")?.classList.remove("open");
     };
   });
   const studio = $("#studioNav");
   if (studio) studio.onclick = () => {
+    markNotificationsRead("studio");
     document.querySelectorAll(".navitem").forEach(x => x.classList.remove("active"));
     studio.classList.add("active");
     $("#pageTitle").textContent = "AI Task & Video Studio";
@@ -349,6 +375,7 @@ function render() {
     const v = $("#proposal").value.trim();
     if (v) {
       tasks.unshift("Propuesta: " + v);
+      notifySection("board", "Nueva propuesta: " + v);
       render();
     }
   };
@@ -356,6 +383,7 @@ function render() {
   document.querySelectorAll(".action").forEach(b => {
     b.onclick = () => {
       tasks.unshift(b.dataset.task);
+      notifySection(active, "Nueva actividad: " + b.dataset.task);
       render();
     };
   });
@@ -485,6 +513,7 @@ async function sendChat() {
     a: finalAnswer,
     results
   });
+  notifySection("ai", "Nueva respuesta de " + finalName);
 
   render();
 
