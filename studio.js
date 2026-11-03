@@ -1,5 +1,5 @@
 (() => {
-  const API = "https://ai-command-center-pavd.onrender.com";
+  const API = "https://jarvis-core-wvls.onrender.com";
   const nav = document.querySelector("#nav");
   if (!nav) return;
   const button = document.createElement("button");
