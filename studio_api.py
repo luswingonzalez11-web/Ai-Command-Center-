@@ -84,7 +84,11 @@ async def create_signed_video_url(filename: str):
     signed = response.json().get("signedURL") or response.json().get("signedUrl")
     if not signed:
         raise HTTPException(502, "Supabase no devolvió un enlace temporal para el video.")
-    return signed if signed.startswith("http") else base + signed
+    if signed.startswith("http"):
+        return signed
+    if signed.startswith("/storage/v1/"):
+        return base + signed
+    return base + "/storage/v1" + (signed if signed.startswith("/") else "/" + signed)
 
 
 
