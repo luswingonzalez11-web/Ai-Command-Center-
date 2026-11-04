@@ -831,7 +831,7 @@ async def animate_from_description(req: VideoAnimateRequest):
         try:
             audio_genre = create_atmosphere_wav(ambience_path, sum(scene_durations), req.title + " " + req.prompt, req.audio_volume)
             import imageio_ffmpeg
-            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe())
+            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe(), voice_present=(voice_status == "generated"))
         except Exception as exc:
             target.unlink(missing_ok=True)
             raise HTTPException(500, "No se pudo incorporar la música ambiental: " + str(exc)[:300])
