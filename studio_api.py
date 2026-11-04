@@ -28,6 +28,66 @@ def connect():
     c.row_factory = sqlite3.Row
     return c
 
+def supabase_storage_config():
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not base or not key:
+        raise HTTPException(503, "El almacenamiento permanente no está configurado. Revisa SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en Render.")
+    return base, key
+
+
+async def persist_generated_video(target: Path, title: str, description: str, filename: str):
+    """Upload MP4 to private Supabase Storage and persist its library metadata."""
+    base, key = supabase_storage_config()
+    headers = {"apikey": key, "Authorization": "Bearer " + key}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=20.0)) as client:
+            with target.open("rb") as stream:
+                uploaded = await client.post(
+                    base + "/storage/v1/object/jarvis-videos/" + filename,
+                    headers={**headers, "Content-Type": "video/mp4", "x-upsert": "true"},
+                    content=stream.read()
+                )
+            if uploaded.is_error:
+                raise RuntimeError("Supabase Storage rechazó el MP4: " + uploaded.text[:350])
+            metadata = await client.post(
+                base + "/rest/v1/studio_video_assets?select=*",
+                headers={**headers, "Content-Type": "application/json", "Prefer": "return=representation"},
+                json={"title": title[:180], "description": description[:4000],
+                      "filename": filename, "media_type": "video/mp4",
+                      "size_bytes": target.stat().st_size, "status": "review"}
+            )
+            if metadata.is_error:
+                raise RuntimeError("El MP4 se subió, pero no se pudo registrar en la biblioteca: " + metadata.text[:350])
+            rows = metadata.json()
+            if not rows:
+                raise RuntimeError("Supabase no confirmó el registro del MP4.")
+            item = rows[0]
+            item["url"] = f"/api/studio/videos/{item['id']}/file"
+            return item
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudo guardar el MP4 en almacenamiento permanente: " + str(exc)[:400])
+
+
+async def create_signed_video_url(filename: str):
+    base, key = supabase_storage_config()
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            base + "/storage/v1/object/sign/jarvis-videos/" + filename,
+            headers={"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"},
+            json={"expiresIn": 3600}
+        )
+    if response.is_error:
+        raise HTTPException(502, "No se pudo abrir el video almacenado: " + response.text[:300])
+    signed = response.json().get("signedURL") or response.json().get("signedUrl")
+    if not signed:
+        raise HTTPException(502, "Supabase no devolvió un enlace temporal para el video.")
+    return signed if signed.startswith("http") else base + signed
+
+
+
 with connect() as c:
     c.execute("""CREATE TABLE IF NOT EXISTS studio_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -264,43 +324,97 @@ async def upload_video(
     return item
 
 @router.get("/videos")
-def list_videos():
-    with connect() as c:
-        rows = c.execute("SELECT * FROM studio_videos ORDER BY id DESC LIMIT 200").fetchall()
-    result = []
-    for row in rows:
-        item = dict(row)
+async def list_videos():
+    base, key = supabase_storage_config()
+    headers = {"apikey": key, "Authorization": "Bearer " + key}
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(base + "/rest/v1/studio_video_assets",
+            headers=headers, params={"select":"*", "order":"created_at.desc", "limit":"200"})
+    if response.is_error:
+        raise HTTPException(502, "No se pudo cargar la biblioteca permanente: " + response.text[:250])
+    result = response.json()
+    for item in result:
         item["url"] = f"/api/studio/videos/{item['id']}/file"
-        result.append(item)
+    # Keep older user-uploaded files visible when they still exist on this instance.
+    with connect() as c:
+        local_rows = c.execute("SELECT * FROM studio_videos ORDER BY id DESC LIMIT 200").fetchall()
+    for row in local_rows:
+        item = dict(row)
+        if (VIDEO_DIR / item["filename"]).is_file() or (RENDER_DIR / item["filename"]).is_file():
+            item["url"] = f"/api/studio/videos/{item['id']}/file"
+            result.append(item)
     return result
 
+
 @router.get("/videos/{video_id}/file")
-def get_video(video_id: int):
-    from fastapi.responses import FileResponse
+async def get_video(video_id: str):
+    from fastapi.responses import FileResponse, RedirectResponse
+    # UUID records are permanent Supabase Storage objects.
+    try:
+        base, key = supabase_storage_config()
+        headers = {"apikey": key, "Authorization": "Bearer " + key}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(base + "/rest/v1/studio_video_assets",
+                headers=headers, params={"select":"filename", "id":"eq." + video_id, "limit":"1"})
+        if response.is_error:
+            raise HTTPException(502, "No se pudo consultar el archivo en la biblioteca.")
+        rows = response.json()
+        if rows:
+            signed_url = await create_signed_video_url(rows[0]["filename"])
+            return RedirectResponse(signed_url, status_code=307)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    # Compatibility path for older locally uploaded videos.
+    try:
+        numeric_id = int(video_id)
+    except ValueError:
+        raise HTTPException(404, "Video no encontrado")
     with connect() as c:
-        row = c.execute("SELECT * FROM studio_videos WHERE id=?", (video_id,)).fetchone()
+        row = c.execute("SELECT * FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Video no encontrado")
-    # Uploaded videos live in VIDEO_DIR; generated MP4s live in RENDER_DIR.
-    # Check both locations so library playback works for either kind of video.
     path = VIDEO_DIR / row["filename"]
     if not path.is_file():
         path = RENDER_DIR / row["filename"]
     if not path.is_file():
-        raise HTTPException(404, "El archivo no está disponible en el almacenamiento del servidor")
-    # Serve inline so the HTML5 <video> element can play the file instead of forcing a download.
+        raise HTTPException(404, "El archivo antiguo ya no está en el disco temporal del servidor.")
     return FileResponse(path, media_type=row["media_type"])
 
+
 @router.post("/videos/{video_id}/status")
-def set_video_status(video_id: int, status: str = Form(...)):
+async def set_video_status(video_id: str, status: str = Form(...)):
     if status not in {"review", "approved", "rejected", "ready_to_publish"}:
         raise HTTPException(400, "Estado no válido")
+    try:
+        base, key = supabase_storage_config()
+        headers = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type":"application/json", "Prefer":"return=representation"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.patch(base + "/rest/v1/studio_video_assets",
+                headers=headers, params={"id":"eq." + video_id},
+                json={"status":status})
+        if response.is_error:
+            raise HTTPException(502, "No se pudo actualizar el estado del video.")
+        rows = response.json()
+        if rows:
+            item = rows[0]
+            item["url"] = f"/api/studio/videos/{video_id}/file"
+            return item
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    try:
+        numeric_id = int(video_id)
+    except ValueError:
+        raise HTTPException(404, "Video no encontrado")
     with connect() as c:
-        row = c.execute("SELECT id FROM studio_videos WHERE id=?", (video_id,)).fetchone()
+        row = c.execute("SELECT id FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Video no encontrado")
-        c.execute("UPDATE studio_videos SET status=? WHERE id=?", (status, video_id))
-        updated = c.execute("SELECT * FROM studio_videos WHERE id=?", (video_id,)).fetchone()
+        c.execute("UPDATE studio_videos SET status=? WHERE id=?", (status, numeric_id))
+        updated = c.execute("SELECT * FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
     item = dict(updated)
     item["url"] = f"/api/studio/videos/{video_id}/file"
     return item
@@ -461,24 +575,17 @@ def render_script_video(req: VideoRenderRequest):
         finally:
             ambience_path.unlink(missing_ok=True)
 
-    # Register generated MP4 in the library queried by /api/studio/videos.
-    now = datetime.now(timezone.utc).isoformat()
-    with connect() as c:
-        cur = c.execute(
-            "INSERT INTO studio_videos(title,description,filename,media_type,size_bytes,status,created_at) VALUES(?,?,?,?,?,?,?)",
-            (req.title[:180], req.script[:4000], filename, "video/mp4", target.stat().st_size, "review", now)
-        )
-        library_id = cur.lastrowid
-
+    # Upload to permanent object storage before reporting success.
+    saved = await persist_generated_video(target, req.title, req.script, filename)
     return {
-        "video_id": library_id,
-        "library_url": f"/api/studio/videos/{library_id}/file",
+        "video_id": saved["id"],
+        "library_url": f"/api/studio/videos/{saved['id']}/file",
         "status": "review",
         "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
         "audio_status": audio_genre,
         "duration_seconds": sum(scene_durations),
         "scene_durations": scene_durations,
-        "download_url": "/api/studio/renders/" + filename,
+        "download_url": f"/api/studio/videos/{saved['id']}/file",
         "subtitle_url": "/api/studio/subtitles/" + subtitle_name
     }
 
@@ -654,21 +761,16 @@ async def animate_from_description(req: VideoAnimateRequest):
         finally:
             ambience_path.unlink(missing_ok=True)
 
-    now = datetime.now(timezone.utc).isoformat()
-    with connect() as c:
-        cur = c.execute(
-            "INSERT INTO studio_videos(title,description,filename,media_type,size_bytes,status,created_at) VALUES(?,?,?,?,?,?,?)",
-            (req.title[:180], req.prompt[:4000], filename, "video/mp4", target.stat().st_size, "review", now)
-        )
-        video_id = cur.lastrowid
+    # A render is not successful until the MP4 and metadata are in permanent storage.
+    saved = await persist_generated_video(target, req.title, req.prompt, filename)
     return {
-        "video_id": video_id,
+        "video_id": saved["id"],
         "title": req.title,
         "scenes": len(scenes),
         "duration_seconds": sum(scene_durations),
         "filename": filename,
-        "library_url": f"/api/studio/videos/{video_id}/file",
-        "download_url": "/api/studio/renders/" + filename,
+        "library_url": f"/api/studio/videos/{saved['id']}/file",
+        "download_url": f"/api/studio/videos/{saved['id']}/file",
         "scene_descriptions": descriptions,
         "audio_status": audio_genre,
         "status": "review"
