@@ -636,7 +636,18 @@ async function sendChat() {
       });
       const produced = await response.json();
       if (!response.ok) throw new Error(produced.detail || "No se pudo crear la animación.");
+      if (!produced.video_id || !produced.library_url || !produced.filename) {
+        throw new Error("El MP4 se generó, pero el servidor no confirmó su registro en la biblioteca.");
+      }
+      // Confirm the saved record exists in the same library endpoint used by the Studio UI.
+      const libraryResponse = await fetch(API_BASE + "/api/studio/videos", {cache: "no-store"});
+      if (!libraryResponse.ok) throw new Error("El MP4 se generó, pero no se pudo verificar la biblioteca.");
+      const libraryItems = await libraryResponse.json();
+      const savedItem = Array.isArray(libraryItems) && libraryItems.find(item => String(item.id) === String(produced.video_id));
+      if (!savedItem) throw new Error("El MP4 no aparece en la biblioteca del servidor. No lo marcaré como guardado.");
       localStorage.setItem("jarvis_active_video", JSON.stringify({title, prompt: produced.prompt_used || originalPrompt, video_id: produced.video_id, library_url: produced.library_url}));
+      window.jarvisNotify?.("studio", "Video guardado en Biblioteca: " + title);
+      window.dispatchEvent(new CustomEvent("jarvis:studio-video-saved", {detail: {video_id: produced.video_id}}));
       finalAnswer = (isRevision ? "Nueva versión corregida" : "Animación creada") + " y guardada en revisión.\n" +
         "Título: " + title + "\nEscenas: " + produced.scenes + "\nDuración: " + produced.duration_seconds + " segundos.\n" +
         "Cambios: " + (isRevision ? q : "Brief visual preparado por Claude") + "\n\n" +
