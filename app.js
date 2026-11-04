@@ -1,6 +1,63 @@
 
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
+// JARVIS CORE release/update monitor. Bump this together with version.json on each release.
+const APP_BUILD_VERSION = "2.1.0";
+const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
+
+function renderUpdateNotice(state, version) {
+  const box = document.querySelector("#updateNotice");
+  if (!box) return;
+  if (state === "none") {
+    box.className = "update-notice hidden";
+    box.innerHTML = "";
+    return;
+  }
+  if (state === "deploying") {
+    box.className = "update-notice deploying";
+    box.innerHTML = '<div class="update-notice-copy"><span class="update-notice-icon">⟳</span><div><strong>Nueva actualización en curso</strong><small>JARVIS CORE está publicando la versión ' + version + '. Algunas mejoras todavía pueden tardar en aparecer.</small></div></div>';
+    return;
+  }
+  box.className = "update-notice available";
+  box.innerHTML = '<div class="update-notice-copy"><span class="update-notice-icon">✓</span><div><strong>Nueva actualización disponible</strong><small>La versión ' + version + ' ya está publicada. Recarga para usar las mejoras.</small></div></div><button class="btn primary" id="applyJarvisUpdate">Actualizar ahora</button>';
+  document.querySelector("#applyJarvisUpdate")?.addEventListener("click", () => window.location.reload());
+}
+
+async function checkJarvisUpdates() {
+  try {
+    const manifestResponse = await fetch(RELEASE_MANIFEST_URL + "?t=" + Date.now(), {cache:"no-store"});
+    if (!manifestResponse.ok) return;
+    const manifest = await manifestResponse.json();
+    const latestVersion = String(manifest.version || "");
+    if (!latestVersion || latestVersion === APP_BUILD_VERSION) {
+      renderUpdateNotice("none");
+      return;
+    }
+    // A newer GitHub marker with an older deployed app.js means the deploy is still running.
+    const deployedResponse = await fetch("./app.js?updateCheck=" + Date.now(), {cache:"no-store"});
+    if (!deployedResponse.ok) {
+      renderUpdateNotice("deploying", latestVersion);
+      return;
+    }
+    const deployedSource = await deployedResponse.text();
+    const match = deployedSource.match(/APP_BUILD_VERSION\s*=\s*["']([^"']+)["']/);
+    if (match && match[1] === latestVersion) {
+      renderUpdateNotice("available", latestVersion);
+    } else {
+      renderUpdateNotice("deploying", latestVersion);
+    }
+  } catch (error) {
+    console.debug("JARVIS update check unavailable:", error);
+  }
+}
+
+checkJarvisUpdates();
+setInterval(checkJarvisUpdates, 20000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkJarvisUpdates();
+});
+
+
 const modules = [
   ["core", "⌂", "Núcleo"],
   ["ai", "✧", "SUPER AI"],
