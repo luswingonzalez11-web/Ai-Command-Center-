@@ -540,7 +540,7 @@ async def render_script_video(req: VideoRenderRequest):
             async def create_voice():
                 communicate = edge_tts.Communicate(speech_text, req.voice)
                 await communicate.save(str(audio_path))
-            asyncio.run(create_voice())
+            await create_voice()
             ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
             voiced_path = RENDER_DIR / (Path(filename).stem + "_voiced.mp4")
             mux = subprocess.run(
