@@ -2,10 +2,21 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.1.1";
+const APP_BUILD_VERSION = "2.1.2";
 const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
+let jarvisUpdateStatus = "checking";
+let jarvisLatestVersion = APP_BUILD_VERSION;
+
 function renderUpdateNotice(state, version) {
+  jarvisUpdateStatus = state;
+  if (version) jarvisLatestVersion = version;
+  const updateButton = document.querySelector("#updateNavButton");
+  if (updateButton) {
+    updateButton.classList.toggle("update-nav-ready", state === "available");
+    updateButton.classList.toggle("update-nav-deploying", state === "deploying");
+    updateButton.innerHTML = state === "available" ? `⬆　Actualizar JARVIS <span class="navbadge">${version}</span>` : state === "deploying" ? `⟳　Actualización en curso` : state === "none" ? `✓　JARVIS actualizado` : `↻　Comprobar actualizaciones`;
+  }
   const box = document.querySelector("#updateNotice");
   if (!box) return;
   if (state === "none") {
@@ -162,10 +173,23 @@ function enabledAgents() {
 }
 
 function nav() {
-  $("#nav").innerHTML = modules.map(([id, ic, n]) => {
+  $("#nav").innerHTML = `<button class="navitem update-nav-button" id="updateNavButton" type="button">↻　Comprobar actualizaciones</button>` + modules.map(([id, ic, n]) => {
     const count = unreadCount(id);
     return `<button class="navitem ${active === id ? "active" : ""}" data-id="${id}">${ic}　${n}${count ? `<span class="navbadge">${count > 99 ? "99+" : count}</span>` : ""}</button>`;
   }).join("") + `<button class="navitem" id="studioNav">◉　AI Task & Video Studio${unreadCount("studio") ? `<span class="navbadge">${unreadCount("studio")}</span>` : ""}</button>`;
+
+  const updateNavButton = $("#updateNavButton");
+  if (updateNavButton) {
+    updateNavButton.classList.toggle("update-nav-ready", jarvisUpdateStatus === "available");
+    updateNavButton.classList.toggle("update-nav-deploying", jarvisUpdateStatus === "deploying");
+    updateNavButton.innerHTML = jarvisUpdateStatus === "available" ? `⬆　Actualizar JARVIS <span class="navbadge">${jarvisLatestVersion}</span>` : jarvisUpdateStatus === "deploying" ? `⟳　Actualización en curso` : jarvisUpdateStatus === "none" ? `✓　JARVIS actualizado` : `↻　Comprobar actualizaciones`;
+    updateNavButton.onclick = async () => {
+      if (jarvisUpdateStatus === "available") { window.location.reload(); return; }
+      updateNavButton.textContent = "Comprobando...";
+      await checkJarvisUpdates();
+      if (jarvisUpdateStatus === "none") updateNavButton.textContent = "✓ JARVIS actualizado";
+    };
+  }
 
   document.querySelectorAll(".navitem[data-id]").forEach(b => {
     b.onclick = () => {
