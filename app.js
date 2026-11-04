@@ -48,7 +48,16 @@ const agents = [
 ];
 
 let active = "core";
+const CHAT_HISTORY_KEY = "jarvis_chat_history_v1";
 let messages = [];
+try {
+  const storedChat = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+  messages = Array.isArray(storedChat) ? storedChat.slice(0, 250) : [];
+} catch (_) { messages = []; }
+function saveChatHistory() {
+  try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(messages.slice(0, 250))); }
+  catch (error) { console.warn("No se pudo guardar el historial local de JARVIS:", error); }
+}
 let tasks = [];
 const BOARD_KEY = "jarvis_ai_board_v1";
 let boardProposals = [];
@@ -727,8 +736,10 @@ async function sendChat() {
     q,
     p: finalName,
     a: finalAnswer,
-    results
+    results,
+    created_at: new Date().toISOString()
   });
+  saveChatHistory();
   notifySection("ai", "Nueva respuesta de " + finalName);
 
   render();
