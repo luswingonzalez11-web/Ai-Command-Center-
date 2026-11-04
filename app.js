@@ -2,7 +2,7 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.1.3";
+const APP_BUILD_VERSION = "2.2.0";
 const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
 let jarvisUpdateStatus = "checking";
