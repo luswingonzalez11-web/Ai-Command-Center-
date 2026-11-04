@@ -481,7 +481,7 @@ async def produce_video(req: VideoProduceRequest):
     if provider not in PROVIDERS:
         raise HTTPException(400, "Proveedor no soportado para producción.")
     title = (req.title or req.prompt.strip().splitlines()[0])[:120]
-    prompt = ("Eres el guionista y director de AI Command Center Video Studio. Convierte la propuesta en un guion visual para video vertical breve. Devuelve SOLO entre 4 y 10 escenas, una escena por línea, sin numeración, títulos ni markdown. Cada línea describe una imagen o acción concreta y breve. Mantén continuidad narrativa y un cierre potente. Usa español salvo que el usuario pida otro idioma.\n\nPROPUESTA:\n" + req.prompt)
+    prompt = ("Eres guionista y director de cortos 2D de terror analógico para TikTok/Shorts. Escribe una microhistoria cinematográfica con gancho inmediato, tensión progresiva, detalles concretos y un giro o imagen final inquietante. No expliques el monstruo ni reveles todo al principio. Devuelve SOLO 4 escenas narrativas en español, una por línea, sin numeración, títulos ni markdown. Cada línea debe ser una frase breve que pueda aparecer como subtítulo de máquina de escribir y describir una acción visual específica que el motor pueda ilustrar. Alterna planos/escenarios y mantén continuidad de personajes, ropa, objetos y lugar. Deja pausas sugeridas con frases cortas. No escribas instrucciones técnicas ni etiquetas de cámara.\n\nPROPUESTA:\n" + req.prompt)
     result = await chat(ChatRequest(provider=provider, message=prompt, task_id=req.task_id, request_type='video_script'))
     script = "\n".join(line.strip().lstrip("0123456789.-) ").strip() for line in result["answer"].splitlines() if line.strip() and not line.strip().startswith("```"))
     if len(script) < 20:
