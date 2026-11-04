@@ -637,32 +637,36 @@ async function sendChat() {
       const isRevision = revisionRequest;
       const title = isRevision ? savedVideoContext.title : (q.match(/(?:título|titulo)\s*:\s*([^\n]+)/i)?.[1] || "JARVIS CORE · Nueva animación").slice(0,120);
       const originalPrompt = isRevision ? savedVideoContext.prompt : q;
-      status.textContent = isRevision ? "Claude está aplicando tus correcciones..." : "Claude está preparando la animación desde el chat...";
-      progress.update(isRevision ? "Conservando lo que te gustó y corrigiendo lo que pediste..." : "Preparando brief visual y dibujando escenas...");
-      const response = await fetch(API_BASE + "/api/studio/videos/chat", {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({title, prompt: originalPrompt, feedback: isRevision ? q : "", revision: isRevision, audio_enabled: true, audio_volume: 0.55})
-      });
-      const produced = await response.json();
-      if (!response.ok) throw new Error(produced.detail || "No se pudo crear la animación.");
-      if (!produced.video_id || !produced.library_url || !produced.filename) {
-        throw new Error("El MP4 se generó, pero el servidor no confirmó su registro en la biblioteca.");
+      let produced;
+      let video;
+      if (isRevision) {
+        status.textContent = "Claude está aplicando tus correcciones...";
+        progress.update("Conservando lo que te gustó y corrigiendo lo que pediste...");
+        const response = await fetch(API_BASE + "/api/studio/videos/chat", {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({title, prompt: originalPrompt, feedback: q, revision: true, audio_enabled: true, audio_volume: 0.55})
+        });
+        produced = await response.json();
+        if (!response.ok) throw new Error(produced.detail || "No se pudo corregir la animación.");
+        video = produced;
+      } else {
+        status.textContent = "El agente está preparando el guion y JARVIS está conectando el motor 2D...";
+        progress.update("El agente escribe el guion; el motor de Video Studio dibuja y renderiza las escenas...");
+        produced = await produceVideo(q, provider, "chat-" + Date.now());
+        video = produced.video || produced;
       }
-      // Confirm the saved record exists in the same library endpoint used by the Studio UI.
-      const libraryResponse = await fetch(API_BASE + "/api/studio/videos", {cache: "no-store"});
-      if (!libraryResponse.ok) throw new Error("El MP4 se generó, pero no se pudo verificar la biblioteca.");
-      const libraryItems = await libraryResponse.json();
-      const savedItem = Array.isArray(libraryItems) && libraryItems.find(item => String(item.id) === String(produced.video_id));
-      if (!savedItem) throw new Error("El MP4 no aparece en la biblioteca del servidor. No lo marcaré como guardado.");
-      localStorage.setItem("jarvis_active_video", JSON.stringify({title, prompt: produced.prompt_used || originalPrompt, video_id: produced.video_id, library_url: produced.library_url}));
+      if (!video.video_id || !video.library_url || !video.filename) {
+        throw new Error("El proceso terminó, pero el servidor no confirmó el MP4 guardado en la biblioteca.");
+      }
+      localStorage.setItem("jarvis_active_video", JSON.stringify({title, prompt: produced.prompt_used || originalPrompt, video_id: video.video_id, library_url: video.library_url}));
       window.jarvisNotify?.("studio", "Video guardado en Biblioteca: " + title);
-      window.dispatchEvent(new CustomEvent("jarvis:studio-video-saved", {detail: {video_id: produced.video_id}}));
+      window.dispatchEvent(new CustomEvent("jarvis:studio-video-saved", {detail: {video_id: video.video_id}}));
       finalAnswer = (isRevision ? "Nueva versión corregida" : "Animación creada") + " y guardada en revisión.\n" +
-        "Título: " + title + "\nEscenas: " + produced.scenes + "\nDuración: " + produced.duration_seconds + " segundos.\n" +
-        "Cambios: " + (isRevision ? q : "Brief visual preparado por Claude") + "\n\n" +
-        "Ver MP4: " + API_BASE + produced.library_url + "\nDescargar: " + API_BASE + produced.download_url +
+        "Título: " + title + "\nEscenas: " + video.scenes + "\nDuración: " + video.duration_seconds + " segundos.\n" +
+        "Cambios: " + (isRevision ? q : "Guion preparado por " + (agents.find(a => a[2] === provider)?.[0] || provider) + " y renderizado por el motor 2D") + "\n\n" +
+        "Ver MP4: " + API_BASE + video.library_url + "\nDescargar: " + API_BASE + video.download_url +
         "\n\nLa versión anterior se conserva. Esta nueva versión no se publica hasta que tú la apruebes.";
-      finalName = "Claude · Director creativo";
+      finalName = isRevision ? "Claude · Director creativo" : (agents.find(a => a[2] === provider)?.[0] || provider) + " + JARVIS Video Studio";
     } else if (selectedMode === "individual") {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
