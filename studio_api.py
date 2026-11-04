@@ -421,7 +421,7 @@ async def set_video_status(video_id: str, status: str = Form(...)):
 
 
 @router.post("/videos/render")
-def render_script_video(req: VideoRenderRequest):
+async def render_script_video(req: VideoRenderRequest):
     """Create a vertical storyboard MP4 from a script."""
     try:
         import imageio_ffmpeg
