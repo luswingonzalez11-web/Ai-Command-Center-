@@ -2,7 +2,7 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.2.0";
+const APP_BUILD_VERSION = "2.2.1";
 const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
 let jarvisUpdateStatus = "checking";
@@ -899,11 +899,32 @@ async function loadUsageMetrics() {
       '<div class="usage-stat"><small>Solicitudes</small><strong>' + fmt(t.requests) + '</strong><span>' + fmt(t.successful) + ' correctas · ' + fmt(t.failed) + ' fallidas</span></div>' +
       '<div class="usage-stat"><small>Cobertura de tokens</small><strong>' + (t.requests ? Math.round(t.token_records/t.requests*100) : 0) + '%</strong><span>Reportados por proveedor</span></div></div>' +
       '<h3 class="sectiontitle">Rendimiento por agente</h3><div class="list">';
-    html += d.by_provider.length ? d.by_provider.map(x => '<div class="listitem"><b>' + escapeHtml(x.provider) + '</b><span>' + fmt(x.average_latency_ms) + ' ms · ' + fmt(x.tokens) + ' tokens · ' + x.requests + ' solicitudes</span></div>').join("") : '<div class="empty">Todavía no hay solicitudes registradas.</div>';
-    html += '</div><h3 class="sectiontitle">Actividad reciente</h3><div class="list">';
+    const quotaKey = "jarvis_token_quotas_v1";
+    let quotas = {};
+    try { quotas = JSON.parse(localStorage.getItem(quotaKey) || "{}"); } catch (_) {}
+    html += '</div><h3 class="sectiontitle">Tokens disponibles · estimación</h3><p class="muted">Introduce el límite de tokens que tienes asignado en cada proveedor. JARVIS restará el consumo que ha podido registrar; no es un saldo oficial de la cuenta.</p><div class="list">';
+    html += d.by_provider.length ? d.by_provider.map(x => {
+      const used = Number(x.tokens || 0);
+      const quota = Number(quotas[x.provider] || 0);
+      const remaining = quota > 0 ? Math.max(0, quota - used) : null;
+      return '<div class="card"><div class="row"><b>' + escapeHtml(x.provider) + '</b><strong style="color:var(--cyan)">' + (remaining === null ? 'Configura tu límite' : fmt(remaining) + ' tokens aprox.') + '</strong></div><label class="muted" for="quota-' + escapeHtml(x.provider) + '">Tu límite de tokens para este período</label><input class="token-quota-input" id="quota-' + escapeHtml(x.provider) + '" data-provider="' + escapeHtml(x.provider) + '" type="number" min="0" step="1" value="' + (quota || '') + '" placeholder="Ej. 1000000"><small class="muted">Registrados en las últimas 500 solicitudes: ' + fmt(used) + ' · ' + x.requests + ' solicitudes</small></div>';
+    }).join("") : '<div class="empty">Todavía no hay consumo por agente. Envía una solicitud para comenzar a medir.</div>';
+    html += '</div><p class="footer">Nota: OpenAI, Anthropic, Gemini y otros proveedores no ofrecen siempre un endpoint para consultar el saldo exacto de tokens disponibles. Esta cifra es una estimación basada en el límite que configures y el uso registrado por JARVIS; puede no incluir consumo externo ni solicitudes sin métricas.</p><h3 class="sectiontitle">Actividad reciente</h3><div class="list">';
     html += d.recent.length ? d.recent.slice(0,20).map(x => '<div class="listitem"><span><b>' + escapeHtml(x.provider) + '</b> · ' + escapeHtml(x.model) + '<small class="muted" style="display:block">' + new Date(x.created_at).toLocaleString() + '</small></span><span>' + fmt(x.latency_ms) + ' ms · ' + (x.total_tokens == null ? 'tokens N/D' : fmt(x.total_tokens)+' tokens') + '</span></div>').join("") : '<div class="empty">Envía un chat o tarea para empezar a medir.</div>';
     html += '</div><p class="footer">Ventana: últimas 500 solicitudes. Costos no estimados hasta configurar tarifas verificadas por modelo. Los tokens no disponibles se marcan como N/D.</p>';
     box.innerHTML = html;
+    box.querySelectorAll(".token-quota-input").forEach(input => {
+      input.addEventListener("change", () => {
+        const provider = input.dataset.provider;
+        const value = Math.max(0, Number(input.value || 0));
+        try {
+          const saved = JSON.parse(localStorage.getItem(quotaKey) || "{}");
+          if (value > 0) saved[provider] = value; else delete saved[provider];
+          localStorage.setItem(quotaKey, JSON.stringify(saved));
+          loadUsageMetrics();
+        } catch (_) {}
+      });
+    });
   } catch (e) {
     box.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
   }
