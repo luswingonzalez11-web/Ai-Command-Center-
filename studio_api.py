@@ -567,6 +567,35 @@ async def render_script_video(req: VideoRenderRequest):
             raise HTTPException(502, "No se pudo generar o incorporar la voz. Inténtalo de nuevo: " + str(exc)[:250])
 
     audio_genre = "off"
+    voice_status = "not_selected"
+    # Narration is intentionally occasional, not forced on every short.
+    # A stable title hash gives roughly one narrated story in three.
+    should_narrate = (sum(ord(ch) for ch in (req.title or "")) % 3 == 0)
+    if should_narrate:
+        try:
+            import edge_tts
+            import imageio_ffmpeg
+            speech_path = RENDER_DIR / (Path(filename).stem + "_narration.mp3")
+            speech_text = " ".join(story_lines)[:5000]
+            speaker = edge_tts.Communicate(speech_text, "es-MX-DaliaNeural")
+            await speaker.save(str(speech_path))
+            voiced_path = RENDER_DIR / (Path(filename).stem + "_narrated.mp4")
+            mux = subprocess.run(
+                [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", str(target), "-i", str(speech_path),
+                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                 "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(voiced_path)],
+                capture_output=True, text=True, timeout=240
+            )
+            speech_path.unlink(missing_ok=True)
+            if mux.returncode != 0:
+                voiced_path.unlink(missing_ok=True)
+                raise RuntimeError(mux.stderr[-700:])
+            target.unlink(missing_ok=True)
+            voiced_path.replace(target)
+            voice_status = "generated"
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(502, "No se pudo generar la narración: " + str(exc)[:250])
     if req.audio_enabled:
         ambience_path = RENDER_DIR / (Path(filename).stem + "_ambience.wav")
         try:
@@ -604,7 +633,7 @@ async def animate_from_description(req: VideoAnimateRequest):
         raise HTTPException(503, "Falta ANTHROPIC_API_KEY en Render.")
     try:
         import cairosvg
-        from PIL import Image, ImageEnhance
+        from PIL import Image, ImageEnhance, ImageDraw, ImageFont
         import imageio_ffmpeg
     except ImportError as exc:
         raise HTTPException(503, "Falta una dependencia del motor 2D: " + str(exc))
@@ -624,15 +653,27 @@ async def animate_from_description(req: VideoAnimateRequest):
         scenes = []
         async with httpx.AsyncClient(timeout=180) as client:
             for index in range(4):
+                story_lines = [line.strip() for line in req.prompt.splitlines() if line.strip()]
+                scene_text = story_lines[index] if index < len(story_lines) else req.prompt[:500]
                 scene_prompt = (
-                    "Draw one simple but expressive 2D vector illustration for scene "
-                    + str(index + 1) + " of 4. Story context: " + req.prompt[:900] + "\\n"
+                    "Create a polished 2D ANALOG-HORROR STORYBOARD FRAME, not a logo, icon, poster, "
+                    "generic geometric shapes, or slideshow card. Scene " + str(index + 1) + " of 4. "
+                    "FULL STORY CONTEXT: " + req.prompt[:1200] + "\\n"
+                    "THIS SCENE MUST VISUALLY DEPICT: " + scene_text[:500] + "\\n"
+                    "Reference art direction: unsettling VHS found-footage short story. A detailed illustrated "
+                    "environment in the UPPER 58 percent: recognizable room, corridor, bedroom, laboratory, "
+                    "military checkpoint, street or other exact place named by the scene; strong foreground, "
+                    "midground and background; one memorable character/creature/object with readable silhouette; "
+                    "cinematic perspective and purposeful lighting. Use a restrained dark palette, muted colors, "
+                    "subtle purple/blue/dirty-red highlights, hand-drawn 2D shapes with layered detail. "
+                    "Reserve the LOWER 42 percent as clean near-black negative space for captions added later. "
+                    "Add a subtle CRT monitor frame around the illustration, tiny timestamp/REC details near its "
+                    "edge, and analog imperfections. Composition must change meaningfully from scene to scene. "
+                    "Do NOT put any words, captions, logos or lettering in the lower caption area. "
                     "Return ONLY a complete SVG, 720x1280, viewBox='0 0 720 1280'. "
-                    "Make a cinematic horror composition with one main subject and a clear background. "
-                    "STRICT SIZE LIMIT: maximum 18 SVG drawing elements total; use only rect, circle, ellipse, "
-                    "line, polygon, path and g. Prefer basic shapes; no gradients, filters, patterns, metadata "
-                    "or long paths. Keep every attribute short. Include one short title. "
-                    "No scripts, foreignObject, external URLs or images. Output SVG markup only."
+                    "Use 25-65 concise SVG elements; use rect, circle, ellipse, line, polygon, path and g. "
+                    "Layer shapes to create an actual scene, not a few abstract shapes. No gradients, filters, "
+                    "external assets, scripts, foreignObject, external URLs or images. Output SVG markup only."
                 )
                 data = {}
                 raw = ""
@@ -640,12 +681,12 @@ async def animate_from_description(req: VideoAnimateRequest):
                     compact_prompt = scene_prompt
                     if attempt == 1:
                         compact_prompt = (
-                            "Create a VERY SIMPLE complete SVG illustration for horror scene "
-                            + str(index + 1) + ". Context: " + req.prompt[:350] + "\\n"
-                            "SVG only, 720x1280, viewBox='0 0 720 1280'. Maximum 10 drawing elements. "
-                            "Use only rect, circle, ellipse, line and polygon. No gradients, defs, filters, "
-                            "long paths, external assets or explanations. One recognizable subject, dark mood. "
-                            "Keep markup extremely short and close the svg tag."
+                            "Draw a complete analog-horror 2D SVG story scene, not an icon. "
+                            "Scene " + str(index + 1) + ". Show this exact event: " + scene_text[:260] + ". "
+                            "Dark detailed environment, one recognizable subject, VHS surveillance framing, "
+                            "cinematic depth. Keep lower 42 percent empty and black for captions. "
+                            "SVG 720x1280 viewBox='0 0 720 1280'. Use 18-35 concise shapes. "
+                            "No external assets, scripts, text captions or explanations. SVG only."
                         )
                     response = await client.post(
                         "https://api.anthropic.com/v1/messages",
@@ -721,6 +762,32 @@ async def animate_from_description(req: VideoAnimateRequest):
                     base_path.write_bytes(base_png)
                     with Image.open(base_path) as opened:
                         base_image = opened.convert("RGB")
+                    # Permanent analog-horror treatment: scene-specific typewriter caption,
+                    # CRT scanlines, vignette-like darkening and restrained VHS noise.
+                    caption = story_lines[scene_index] if scene_index < len(story_lines) else description
+                    canvas = base_image.copy()
+                    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    odraw = ImageDraw.Draw(overlay)
+                    odraw.rectangle((0, 735, width, height), fill=(5, 4, 8, 242))
+                    try:
+                        caption_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", 39)
+                        small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 15)
+                    except OSError:
+                        caption_font = ImageFont.load_default()
+                        small_font = ImageFont.load_default()
+                    odraw.text((42, 770), "ARCHIVO / REGISTRO " + str(scene_index + 1).zfill(2),
+                               font=small_font, fill=(160, 145, 166, 220))
+                    wrapped = textwrap.wrap(caption, width=27)[:6]
+                    y_caption = 830
+                    for caption_line in wrapped:
+                        bbox = odraw.textbbox((0, 0), caption_line, font=caption_font)
+                        line_width = bbox[2] - bbox[0]
+                        odraw.text(((width - line_width) // 2, y_caption), caption_line,
+                                   font=caption_font, fill=(226, 216, 224, 255),
+                                   stroke_width=1, stroke_fill=(75, 65, 78, 180))
+                        y_caption += 58
+                    odraw.text((width - 115, 18), "● REC", font=small_font, fill=(210, 85, 95, 230))
+                    base_image = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
                     total_frames = scene_durations[scene_index] * fps
                     for frame_no in range(total_frames):
                         progress = frame_no / max(1, total_frames - 1)
@@ -732,9 +799,15 @@ async def animate_from_description(req: VideoAnimateRequest):
                         left = int(max_x * progress * (1 if scene_index % 2 == 0 else 0.25))
                         top = int(max_y * progress * (0.25 if scene_index % 2 == 0 else 1))
                         frame = scaled.crop((left, top, left + width, top + height))
-                        # Subtle exposure flicker for a hand-rendered animation feel.
+                        # CRT scanlines and occasional tape/exposure flutter.
                         if frame_no % 7 == 0:
-                            frame = ImageEnhance.Brightness(frame).enhance(0.97)
+                            frame = ImageEnhance.Brightness(frame).enhance(0.91)
+                        frame_draw = ImageDraw.Draw(frame)
+                        for scan_y in range(0, height, 5):
+                            frame_draw.line((0, scan_y, width, scan_y), fill=(0, 0, 0), width=1)
+                        if frame_no % 43 in (0, 1):
+                            frame_draw.rectangle((0, (frame_no * 17) % height, width, min(height, (frame_no * 17) % height + 3)),
+                                                 fill=(180, 170, 190))
                         frame_name = "frame_" + str(scene_index).zfill(2) + "_" + str(frame_no).zfill(4) + ".jpg"
                         frame_path = tmpdir / frame_name
                         frame.save(frame_path, quality=90)
@@ -777,6 +850,8 @@ async def animate_from_description(req: VideoAnimateRequest):
         "download_url": f"/api/studio/videos/{saved['id']}/file",
         "scene_descriptions": descriptions,
         "audio_status": audio_genre,
+        "voice_status": voice_status,
+        "visual_style": "analog_horror_vhs_2d",
         "status": "review"
     }
 
