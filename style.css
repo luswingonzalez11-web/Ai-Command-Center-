@@ -82,3 +82,19 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
 .jarvis-progress-track span{display:block;width:38%;height:100%;border-radius:99px;background:linear-gradient(90deg,#087e99,#49e7ff,#8af5ff);box-shadow:0 0 14px #29d8f1aa;animation:jarvisLoading 1.35s ease-in-out infinite}
 .jarvis-progress-hint{margin-top:9px;color:var(--muted);font-size:11px;line-height:1.5}
 @keyframes jarvisLoading{0%{transform:translateX(-110%)}100%{transform:translateX(285%)}}
+
+
+/* Live deployment and app update notice */
+.update-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:-7px 0 20px;padding:13px 16px;border:1px solid #28647b;border-radius:13px;background:linear-gradient(100deg,#0c2c40,#0a1b2b);box-shadow:0 0 25px #29d8f11a}
+.update-notice.hidden{display:none!important}
+.update-notice-copy{display:flex;align-items:center;gap:12px;min-width:0}
+.update-notice-icon{width:34px;height:34px;flex:0 0 34px;border:1px solid #2a8299;border-radius:50%;display:grid;place-items:center;color:var(--cyan);font-size:17px}
+.update-notice strong{display:block;color:#e9fbff;font-size:13px;letter-spacing:.3px}
+.update-notice small{display:block;color:var(--muted);font-size:11px;margin-top:3px;line-height:1.4}
+.update-notice.deploying{border-color:#80612d;background:linear-gradient(100deg,#302713,#171c25)}
+.update-notice.deploying .update-notice-icon{color:#ffd27b;border-color:#80612d;animation:updateSpin 2.5s linear infinite}
+.update-notice.available{border-color:#267b66}
+.update-notice.available .update-notice-icon{color:var(--green);border-color:#267b66}
+.update-notice .btn{white-space:nowrap;flex:0 0 auto}
+@keyframes updateSpin{to{transform:rotate(360deg)}}
+@media(max-width:560px){.update-notice{align-items:flex-start;flex-direction:column}.update-notice .btn{width:100%}}
