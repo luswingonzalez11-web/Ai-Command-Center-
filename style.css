@@ -138,3 +138,15 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
   .chat-composer textarea{min-height:48px;padding:13px;border-radius:16px}
   .chat-composer .btn{min-height:48px;padding:0 13px}
 }
+
+/* Persistent deployment center: always visible at the top of the workspace */
+.update-notice{display:block!important;margin:-7px 0 20px;padding:13px 16px}
+.update-notice-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.update-notice.current{border-color:#267b66;background:linear-gradient(100deg,#102d29,#0a1b2b)}
+.update-notice.checking{border-color:#28647b}
+.update-notice.checking .update-notice-icon{animation:updateSpin 2s linear infinite}
+.deploy-progress{display:flex;flex-wrap:wrap;gap:8px;margin:11px 0 0 46px}
+.deploy-step{font-size:10px;letter-spacing:.2px;padding:5px 9px;border:1px solid #29465a;border-radius:20px;color:var(--muted);background:#091a28}
+.deploy-step.done{color:var(--green);border-color:#275c4b}
+.deploy-step.active{color:#ffd27b;border-color:#80612d;background:#302713}
+@media(max-width:560px){.update-notice-heading{align-items:flex-start;flex-direction:column}.deploy-progress{margin-left:0}.deploy-step{font-size:9px}}
