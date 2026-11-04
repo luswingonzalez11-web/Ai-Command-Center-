@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from studio_api import router as studio_router, VideoRenderRequest, render_script_video
+from studio_api import router as studio_router, VideoAnimateRequest, animate_from_description
 
 load_dotenv()
 
@@ -486,7 +486,14 @@ async def produce_video(req: VideoProduceRequest):
     script = "\n".join(line.strip().lstrip("0123456789.-) ").strip() for line in result["answer"].splitlines() if line.strip() and not line.strip().startswith("```"))
     if len(script) < 20:
         raise HTTPException(502, "El agente no produjo un guion suficiente para generar el video.")
-    rendered = render_script_video(VideoRenderRequest(title=title, script=script, seconds_per_scene=4, voice_enabled=req.voice_enabled))
+    # Reuse the same Claude-powered 2D animation engine used by Video Studio.
+    # The selected chat agent writes the script; the Studio renderer creates and stores the MP4.
+    rendered = await animate_from_description(VideoAnimateRequest(
+        title=title,
+        prompt=script,
+        audio_enabled=True,
+        audio_volume=0.55
+    ))
     return {"status":"completed","title":title,"provider":provider,"script":script,"video":rendered,"message":"MP4 generado y registrado en AI Task & Video Studio."}
 
 @app.post("/api/chat")
