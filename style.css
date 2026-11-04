@@ -98,3 +98,11 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
 .update-notice .btn{white-space:nowrap;flex:0 0 auto}
 @keyframes updateSpin{to{transform:rotate(360deg)}}
 @media(max-width:560px){.update-notice{align-items:flex-start;flex-direction:column}.update-notice .btn{width:100%}}
+
+
+/* Interactive release control pinned above Core navigation */
+.update-nav-button{border-color:#24677d!important;background:linear-gradient(105deg,#0d3448,#0a2031)!important;color:#bcefff!important;font-size:12px!important;font-weight:750!important;letter-spacing:.2px;box-shadow:0 0 18px #29d8f11a}
+.update-nav-button:hover{border-color:var(--cyan)!important;box-shadow:0 0 22px #29d8f133!important}
+.update-nav-button.update-nav-ready{background:linear-gradient(105deg,#07516a,#0d3448)!important;border-color:#39d9f3!important;color:#fff!important;box-shadow:0 0 20px #29d8f144!important}
+.update-nav-button.update-nav-deploying{border-color:#80612d!important;color:#ffd27b!important;background:linear-gradient(105deg,#302713,#171c25)!important}
+.update-nav-button .navbadge{margin-left:auto;background:#19a9c9;color:#04131d;animation:none}
