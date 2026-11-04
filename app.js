@@ -325,11 +325,7 @@ function render() {
             </select>
           </div>
 
-          <textarea id="prompt" placeholder="Escribe tu objetivo o pregunta..."></textarea>
-          <button class="btn primary" id="send" ${paused ? "disabled" : ""}>
-            ${paused ? "Sistema pausado" : "Enviar solicitud ↗"}
-          </button>
-          <p class="muted" id="chatStatus">${paused ? "Reanuda el sistema para enviar solicitudes." : "Listo para recibir instrucciones."}</p>
+          <p class="muted chat-status" id="chatStatus">${paused ? "Reanuda el sistema para enviar solicitudes." : "Listo para recibir instrucciones."}</p>
         </div>
 
         <section class="chat-thread" id="chatlog" aria-label="Conversación con las IA">
@@ -352,6 +348,12 @@ function render() {
             </article>
           `).join("")}
         </section>
+        <div class="chat-composer">
+          <textarea id="prompt" rows="1" placeholder="Escribe un mensaje a JARVIS..." aria-label="Mensaje para JARVIS"></textarea>
+          <button class="btn primary" id="send" ${paused ? "disabled" : ""} aria-label="Enviar mensaje">
+            ${paused ? "Pausado" : "Enviar ↗"}
+          </button>
+        </div>
       </div>
     `;
 
@@ -507,6 +509,15 @@ function render() {
 
   const send = $("#send");
   if (send) send.onclick = sendChat;
+  const chatlog = $("#chatlog");
+  if (chatlog) chatlog.scrollTop = chatlog.scrollHeight;
+  const prompt = $("#prompt");
+  if (prompt) prompt.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendChat();
+    }
+  });
 
   const chatMode = $("#chatMode");
   if (chatMode) chatMode.onchange = () => {
