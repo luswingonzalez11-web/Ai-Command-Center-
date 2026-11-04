@@ -2,7 +2,7 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.1.2";
+const APP_BUILD_VERSION = "2.1.3";
 const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
 let jarvisUpdateStatus = "checking";
@@ -14,24 +14,36 @@ function renderUpdateNotice(state, version) {
   const updateButton = document.querySelector("#updateNavButton");
   if (updateButton) {
     updateButton.classList.toggle("update-nav-ready", state === "available");
-    updateButton.classList.toggle("update-nav-deploying", state === "deploying");
-    updateButton.innerHTML = state === "available" ? `⬆　Actualizar JARVIS <span class="navbadge">${version}</span>` : state === "deploying" ? `⟳　Actualización en curso` : state === "none" ? `✓　JARVIS actualizado` : `↻　Comprobar actualizaciones`;
+    updateButton.classList.toggle("update-nav-deploying", state === "deploying" || state === "checking");
+    updateButton.innerHTML = state === "available" ? `⬆　Actualizar JARVIS <span class="navbadge">${version}</span>` : state === "deploying" ? `⟳　Deploy en curso` : state === "checking" ? `◌　Verificando deploy` : `✓　JARVIS actualizado`;
   }
   const box = document.querySelector("#updateNotice");
   if (!box) return;
-  if (state === "none") {
-    box.className = "update-notice hidden";
-    box.innerHTML = "";
+  const stages = state === "deploying"
+    ? '<span class="deploy-step done">✓ Código recibido</span><span class="deploy-step active">⟳ Build / Deploy</span><span class="deploy-step">○ Publicación</span>'
+    : state === "available"
+    ? '<span class="deploy-step done">✓ Código recibido</span><span class="deploy-step done">✓ Build / Deploy</span><span class="deploy-step done">✓ Publicado</span>'
+    : state === "checking"
+    ? '<span class="deploy-step active">◌ Comprobando versión y publicación…</span>'
+    : '<span class="deploy-step done">✓ Build / Deploy completado</span><span class="deploy-step done">✓ Sistema actualizado</span>';
+  if (state === "available") {
+    box.className = "update-notice available";
+    box.innerHTML = '<div class="update-notice-heading"><div class="update-notice-copy"><span class="update-notice-icon">✓</span><div><strong>Deploy publicado · JARVIS CORE v' + version + '</strong><small>La nueva versión ya está servida por Render. Recarga para aplicar los cambios.</small></div></div><button class="btn primary" id="applyJarvisUpdate">Actualizar ahora</button></div><div class="deploy-progress">' + stages + '</div>';
+    document.querySelector("#applyJarvisUpdate")?.addEventListener("click", () => window.location.reload());
     return;
   }
   if (state === "deploying") {
     box.className = "update-notice deploying";
-    box.innerHTML = '<div class="update-notice-copy"><span class="update-notice-icon">⟳</span><div><strong>Nueva actualización en curso</strong><small>JARVIS CORE está publicando la versión ' + version + '. Algunas mejoras todavía pueden tardar en aparecer.</small></div></div>';
+    box.innerHTML = '<div class="update-notice-heading"><div class="update-notice-copy"><span class="update-notice-icon">⟳</span><div><strong>Deploy en proceso · JARVIS CORE v' + version + '</strong><small>Render está construyendo y publicando los cambios. El sitio anterior seguirá disponible hasta que termine.</small></div></div></div><div class="deploy-progress">' + stages + '</div>';
     return;
   }
-  box.className = "update-notice available";
-  box.innerHTML = '<div class="update-notice-copy"><span class="update-notice-icon">✓</span><div><strong>Nueva actualización disponible</strong><small>La versión ' + version + ' ya está publicada. Recarga para usar las mejoras.</small></div></div><button class="btn primary" id="applyJarvisUpdate">Actualizar ahora</button>';
-  document.querySelector("#applyJarvisUpdate")?.addEventListener("click", () => window.location.reload());
+  if (state === "checking") {
+    box.className = "update-notice checking";
+    box.innerHTML = '<div class="update-notice-heading"><div class="update-notice-copy"><span class="update-notice-icon">◌</span><div><strong>Centro de despliegues</strong><small>Comprobando si hay una nueva versión y verificando el estado de publicación.</small></div></div></div><div class="deploy-progress">' + stages + '</div>';
+    return;
+  }
+  box.className = "update-notice current";
+  box.innerHTML = '<div class="update-notice-heading"><div class="update-notice-copy"><span class="update-notice-icon">✓</span><div><strong>JARVIS CORE actualizado · v' + APP_BUILD_VERSION + '</strong><small>Último deploy detectado como publicado. El monitor seguirá comprobando nuevas versiones.</small></div></div></div><div class="deploy-progress">' + stages + '</div>';
 }
 
 async function checkJarvisUpdates() {
