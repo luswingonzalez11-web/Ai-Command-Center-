@@ -205,4 +205,8 @@
       box.querySelectorAll("[data-save-status]").forEach(b=>b.onclick=async()=>{const id=b.dataset.saveStatus;const form=new FormData();form.append("status",box.querySelector('[data-video-status="'+id+'"]').value);await request("/api/studio/videos/"+id+"/status",{method:"POST",body:form});notify("Estado de video actualizado");loadVideos();});
     }catch(e){box.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
   }
+  // Refresh the library immediately when a video is generated from JARVIS chat.
+  window.addEventListener("jarvis:studio-video-saved", () => {
+    if (document.querySelector("#svVideos")) loadVideos();
+  });
 })();
