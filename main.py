@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from studio_api import router as studio_router, VideoAnimateRequest, animate_from_description
+from ops_api import router as ops_router
 
 load_dotenv()
 
@@ -36,13 +37,14 @@ app = FastAPI(
 )
 
 app.include_router(studio_router)
+app.include_router(ops_router)
 
 origin = os.getenv("CORS_ORIGIN", "*")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in origin.split(",")],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -369,7 +371,7 @@ def health():
     return {
         "status": "ok",
         "service": "JARVIS CORE API",
-        "version": "4.0.0",
+        "version": app.version,
         "identity_system": True,
         "agents": list(AGENT_ROLES.keys())
     }

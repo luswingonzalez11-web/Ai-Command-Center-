@@ -46,3 +46,10 @@ Las llamadas reales requieren claves API válidas y saldo/permisos del proveedor
 
 ## Estado del MVP
 La interfaz, navegación, paneles, lista de tareas y API de chat están implementados como base inicial. OAuth de TikTok/YouTube, publicación real, pagos, autenticación multiusuario y ejecución autónoma segura requieren integraciones y despliegue adicionales.
+
+
+## Mission Diagnostics 2.3.0
+- Read-only `/api/ops/health` and `/api/ops/diagnostics` endpoints.
+- Reports database integrity, configured AI providers, optional integrations, and local video-engine dependencies.
+- Never returns API keys or secret values. External provider connectivity is explicitly not inferred.
+- CORS credentials are disabled because the current browser client does not use cookie-based authentication.

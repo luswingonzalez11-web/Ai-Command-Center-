@@ -150,3 +150,15 @@ input:focus,textarea:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 
 .deploy-step.done{color:var(--green);border-color:#275c4b}
 .deploy-step.active{color:#ffd27b;border-color:#80612d;background:#302713}
 @media(max-width:560px){.update-notice-heading{align-items:flex-start;flex-direction:column}.deploy-progress{margin-left:0}.deploy-step{font-size:9px}}
+
+/* Mission Diagnostics — responsive operational dashboard */
+.ops-hero{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:26px;border:1px solid #20718a;border-radius:20px;background:linear-gradient(115deg,#0b3046,#081827 72%);box-shadow:0 12px 45px #0003}
+.ops-hero h2{font-size:clamp(25px,4vw,36px);margin:9px 0}.ops-hero p{color:var(--muted);margin:0;max-width:620px;line-height:1.6}
+.ops-orb{width:82px;height:82px;flex:0 0 82px;display:grid;place-items:center;border:1px solid var(--cyan);border-radius:50%;font-size:38px;color:var(--cyan);box-shadow:0 0 32px #29d8f155,inset 0 0 20px #29d8f122}
+.ops-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:18px 0;color:var(--muted);font-size:12px}
+.ops-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.ops-card{min-width:0}.ops-card h3{margin:0;font-size:13px;text-transform:capitalize}.ops-card p{color:var(--muted);font-size:12px;line-height:1.55;margin:12px 0 0;overflow-wrap:anywhere}
+.ops-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.ops-state{font-size:10px;padding:5px 8px;border:1px solid var(--line);border-radius:20px;white-space:nowrap}
+.ops-good{color:var(--green);border-color:#267b66}.ops-warn{color:#ffd27b;border-color:#80612d}.ops-neutral{color:#9bb2c3;border-color:#355064}
+.ops-summary{grid-column:span 3;background:linear-gradient(110deg,#0b3042,#0b1a2b)}.ops-summary-value{font-size:30px;font-weight:800;margin:8px 0}.ops-summary p{margin:0;color:var(--muted);font-size:12px}.ops-note,.ops-error{grid-column:span 3}.ops-error{border-color:#80612d;color:#ffd27b}
+@media(max-width:900px){.ops-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.ops-hero{padding:18px}.ops-orb{width:58px;height:58px;flex-basis:58px;font-size:28px}.ops-toolbar{align-items:flex-start;flex-direction:column}.ops-toolbar .btn{width:100%}.ops-grid{grid-template-columns:1fr}.ops-summary,.ops-note,.ops-error{grid-column:span 1}}
