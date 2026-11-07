@@ -69,3 +69,22 @@ input:focus,textarea:focus,select:focus{border-color:#7898a8!important;box-shado
 .chat-image-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:12px;color:var(--white)}
 .chat-image-chip small{color:var(--muted)}
 .chat-image-label{margin-top:7px;color:var(--muted);font-size:12px}
+
+
+/* Vision chat: keep transcript visible while attaching or pasting photos */
+.chat-composer{flex-wrap:wrap;align-items:flex-end}
+.chat-attachment-row,.chat-image-preview{width:100%}
+.chat-image-preview{align-items:center}
+.chat-image-chip{max-width:100%;padding:5px 7px}
+.chat-image-chip>span{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}
+.chat-image-thumb{width:44px;height:44px;object-fit:cover;border-radius:7px;flex:0 0 44px}
+.chat-image-remove{border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1;padding:3px 7px;cursor:pointer}
+.chat-image-remove:hover{color:var(--white)}
+.chat-composer textarea{min-width:0}
+@media(max-width:650px){
+  .chat-thread{max-height:calc(100dvh - 285px)!important;min-height:190px!important}
+  .chat-composer{position:sticky;bottom:0;flex-wrap:wrap;gap:7px}
+  .chat-attachment-row,.chat-image-preview{flex-basis:100%}
+  .chat-composer textarea{flex:1 1 calc(100% - 100px)}
+  .chat-composer>.btn{flex:0 0 auto}
+}
