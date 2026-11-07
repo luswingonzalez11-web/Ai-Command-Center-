@@ -551,8 +551,22 @@ async function loadProviders() {
   }
 }
 
+const sidebar = document.querySelector(".sidebar");
+const menuBackdrop = $("#menuBackdrop");
+function closeMenu() {
+  sidebar.classList.remove("open");
+  menuBackdrop?.classList.remove("visible");
+  $("#menu")?.setAttribute("aria-expanded", "false");
+}
 $("#menu").onclick = () => {
-  document.querySelector(".sidebar").classList.toggle("open");
+  const isOpen = sidebar.classList.toggle("open");
+  menuBackdrop?.classList.toggle("visible", isOpen);
+  $("#menu")?.setAttribute("aria-expanded", String(isOpen));
 };
+$("#closeMenu")?.addEventListener("click", closeMenu);
+menuBackdrop?.addEventListener("click", closeMenu);
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") closeMenu();
+});
 
 render();
