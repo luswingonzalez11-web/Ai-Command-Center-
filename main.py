@@ -259,7 +259,6 @@ No significa que los agentes estén ejecutándose
 continuamente ni que tengan acceso automático al servidor.
 """
 
-
 AGENT_ROLES = {
     "openai": """
 IDENTIDAD INDIVIDUAL: CHATGPT.
@@ -346,7 +345,7 @@ def build_agent_system_prompt(provider: str) -> str:
         "Eres un agente autorizado de JARVIS CORE."
     )
 
-    return JARVIS_IDENTITY + "\n\n" + role + "\n\nJARVIS es la inteligencia compuesta del equipo, no un sexto agente. Conserva tu especialidad, comparte contexto y prioriza entregar trabajo en el módulo correcto. No pidas repetir datos ya presentes. Si recibes una propuesta de video, sigue el flujo de producción de Video Studio en vez de limitarte a aconsejar."
+    return JARVIS_IDENTITY + "\n\n" + role + "\n\nJARVIS es la inteligencia compuesta del equipo, no un sexto agente. Conserva tu especialidad, comparte contexto y prioriza entregar trabajo en el módulo correcto. No pidas repetir datos ya presentes. Si recibes una propuesta de video, sigue el flujo de producción de Video Studio en vez de limitarte a aconsejar. + """\n\nESTILO DE CONVERSACIÓN NATURAL — PRIORIDAD ALTA:\nHabla como un asistente cercano, atento y genuino, no como un robot ni como un manual. Mantén una conversación fluida y adapta el tono al usuario sin imitarlo de forma exagerada.\n\n- Responde primero a lo que la persona realmente quiso decir. Si es un saludo, una reacción o una frase casual, contesta de forma breve y natural; no conviertas cada mensaje en una explicación.\n- Usa el contexto disponible y enlaza las respuestas con lo que ya se viene hablando. No vuelvas a presentarte ni repitas información que la persona ya conoce.\n- Evita introducciones prefabricadas como «Claro, aquí tienes», «Por supuesto» o «Como modelo de IA». No uses frases de relleno.\n- No fuerces listas, títulos, resúmenes ni conclusiones en respuestas sencillas. Úsalos solo cuando ayuden a entender información extensa o varios pasos.\n- Escribe en párrafos cortos, con lenguaje cotidiano, claro y cálido. Usa Markdown con moderación para facilitar la lectura, no para decorar cada respuesta.\n- Evita separadores horizontales, encabezados innecesarios, repeticiones y tono corporativo.\n- Haz una sola pregunta concreta cuando falte un dato esencial. No interrogues al usuario con varias preguntas a la vez.\n- Sé empático sin exagerar emociones, emojis ni familiaridad. Ajusta el nivel de formalidad al tono del usuario y conserva el idioma que esté usando.\n- Sé directo y honesto. No inventes recuerdos, acciones, capacidades, resultados ni certezas. Si no sabes algo, dilo con naturalidad.\n- En modo Team, la síntesis debe sonar como una conversación coherente de JARVIS, no como un informe pegado de varios agentes. Integra las ideas y menciona desacuerdos solo cuando importen.\n- En explicaciones técnicas, mantén precisión, pero explica como un buen compañero que ayuda, con ejemplos sencillos cuando hagan falta.\n\nLa naturalidad nunca debe sacrificar exactitud, seguridad ni claridad. """"
 
 
 # --------------------------------------------------
@@ -517,8 +516,7 @@ async def produce_video(req: VideoProduceRequest):
     provider = req.provider.lower()
     if provider not in PROVIDERS:
         raise HTTPException(400, "Proveedor no soportado para producción.")
-    title = (req.title or req.prompt.strip().splitlines()[0])[:120]
-    prompt = ("Eres guionista y director de cortos 2D de terror analógico para TikTok/Shorts. Escribe una microhistoria cinematográfica con gancho inmediato, tensión progresiva, detalles concretos y un giro o imagen final inquietante. No expliques el monstruo ni reveles todo al principio. Devuelve SOLO 4 escenas narrativas en español, una por línea, sin numeración, títulos ni markdown. Cada línea debe ser una frase breve que pueda aparecer como subtítulo de máquina de escribir y describir una acción visual específica que el motor pueda ilustrar. Alterna planos/escenarios y mantén continuidad de personajes, ropa, objetos y lugar. Deja pausas sugeridas con frases cortas. No escribas instrucciones técnicas ni etiquetas de cámara.\n\nPROPUESTA:\n" + req.prompt)
+    title = (req.title or req.prompt.strip().splitlines()[0])[:120]    prompt = ("Eres guionista y director de cortos 2D de terror analógico para TikTok/Shorts. Escribe una microhistoria cinematográfica con gancho inmediato, tensión progresiva, detalles concretos y un giro o imagen final inquietante. No expliques el monstruo ni reveles todo al principio. Devuelve SOLO 4 escenas narrativas en español, una por línea, sin numeración, títulos ni markdown. Cada línea debe ser una frase breve que pueda aparecer como subtítulo de máquina de escribir y describir una acción visual específica que el motor pueda ilustrar. Alterna planos/escenarios y mantén continuidad de personajes, ropa, objetos y lugar. Deja pausas sugeridas con frases cortas. No escribas instrucciones técnicas ni etiquetas de cámara.\n\nPROPUESTA:\n" + req.prompt)
     result = await chat(ChatRequest(provider=provider, message=prompt, task_id=req.task_id, request_type='video_script'))
     script = "\n".join(line.strip().lstrip("0123456789.-) ").strip() for line in result["answer"].splitlines() if line.strip() and not line.strip().startswith("```"))
     if len(script) < 20:
@@ -777,8 +775,7 @@ Responde en el idioma del usuario.
         latency_ms = int((time.perf_counter() - started_at) * 1000)
         input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", usage.get("promptTokenCount")))
         output_tokens = usage.get("completion_tokens", usage.get("output_tokens", usage.get("candidatesTokenCount")))
-        total_tokens = usage.get("total_tokens", usage.get("totalTokenCount"))
-        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = usage.get("total_tokens", usage.get("totalTokenCount"))        if total_tokens is None and input_tokens is not None and output_tokens is not None:
             total_tokens = int(input_tokens) + int(output_tokens)
         metric = {
             "conversation_id": req.conversation_id, "task_id": req.task_id,
@@ -1037,8 +1034,7 @@ def approve_proposal(
         c.execute(
             """
             UPDATE dev_proposals
-            SET status = 'approved',
-                applied_at = CURRENT_TIMESTAMP
+            SET status = 'approved',                applied_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (proposal_id,)
