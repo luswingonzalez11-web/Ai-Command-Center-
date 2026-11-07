@@ -59,3 +59,13 @@ input:focus,textarea:focus,select:focus{border-color:#7898a8!important;box-shado
  .chat-composer{padding:10px 6px max(12px,env(safe-area-inset-bottom))!important}
  .chat-message{grid-template-columns:1fr!important;gap:4px!important}
 }
+
+/* OpenAI image attachments in the chat composer */
+.chat-attachment-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px}
+.chat-attach-button{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;min-height:36px;padding:7px 13px!important}
+.chat-image-input{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;overflow:hidden!important;pointer-events:none!important}
+.chat-attachment-hint{font-size:11px;color:var(--muted)}
+.chat-image-preview{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 8px}
+.chat-image-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:12px;color:var(--white)}
+.chat-image-chip small{color:var(--muted)}
+.chat-image-label{margin-top:7px;color:var(--muted);font-size:12px}
