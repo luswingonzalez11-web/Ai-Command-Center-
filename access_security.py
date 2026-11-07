@@ -71,6 +71,16 @@ def check_admin(token: Optional[str]):
         raise HTTPException(403, "Acceso de administrador denegado.")
 
 
+async def consume_guest_chat_request(token: str):
+    if not token:
+        return False
+    result = await db_request(
+        "POST", "rpc/consume_jarvis_guest_chat_request",
+        payload={"p_token_hash": digest(token)}
+    )
+    return result is True
+
+
 async def is_valid_guest_session(token: str):
     if not token:
         return False
