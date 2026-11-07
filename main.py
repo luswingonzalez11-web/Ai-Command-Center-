@@ -18,7 +18,7 @@ from ops_api import router as ops_router
 
 load_dotenv()
 
-from access_security import router as access_router, is_valid_guest_session
+from access_security import router as access_router, is_valid_guest_session, consume_guest_chat_request
 
 BASE = Path(__file__).resolve().parent
 DB = BASE / "jarvis.db"
@@ -58,6 +58,8 @@ async def access_guard(request, call_next):
     guest_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
     if guest_token and await is_valid_guest_session(guest_token):
         if path == "/api/chat" and request.method == "POST":
+            if not await consume_guest_chat_request(guest_token):
+                return JSONResponse(status_code=429, content={"detail": "Límite de invitado alcanzado: máximo 50 mensajes al día y 2 segundos entre mensajes."})
             return await call_next(request)
         if path == "/api/providers" and request.method == "GET":
             return await call_next(request)
