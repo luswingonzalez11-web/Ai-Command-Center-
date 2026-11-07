@@ -4,6 +4,7 @@ const API_BASE = "https://ai-command-center-pavd.onrender.com";
 const modules = [
   ["core", "⌂", "Núcleo"],
   ["ai", "✧", "SUPER AI"],
+  ["live", "◉", "JARVIS LIVE"],
   ["command", "◈", "Command Center"],
   ["board", "⚖", "AI Board"],
   ["video", "▣", "Video Studio"],
@@ -200,6 +201,41 @@ function render() {
       </div>
     `;
 
+
+  } else if (active === "live") {
+    html = `
+      <section class="live-shell">
+        <div class="live-topline"><span class="eyebrow">JARVIS CORE / REAL-TIME INTERFACE</span><span class="live-status" id="liveStatus"><i></i> EN ESPERA</span></div>
+        <div class="live-stage" id="liveStage" data-state="idle">
+          <div class="holo-grid"></div>
+          <div class="holo-orbit orbit-one"></div><div class="holo-orbit orbit-two"></div><div class="holo-orbit orbit-three"></div>
+          <div class="holo-core"><div class="core-inner"><span>✧</span></div></div>
+          <div class="sound-rings"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="live-greeting"><b>JARVIS LIVE</b><span id="liveCaption">A tu servicio. ¿Qué necesitas?</span></div>
+        </div>
+        <div class="live-controls">
+          <button class="live-mic" id="liveMic" aria-label="Activar micrófono"><span>🎙</span></button>
+          <div class="live-control-copy"><b id="liveControlTitle">Pulsa para hablar</b><small id="liveControlHint">También puedes escribir tu mensaje abajo.</small></div>
+          <span class="live-listening-dot" id="liveDot"></span>
+        </div>
+        <div class="live-chat card">
+          <label for="prompt">Mensaje para JARVIS</label>
+          <textarea id="prompt" placeholder="Escribe aquí o utiliza el micrófono..."></textarea>
+          <div class="live-options">
+            <label class="speak-toggle"><input type="checkbox" id="autoSpeak" checked> Leer respuestas en voz alta</label>
+            <select id="provider" aria-label="Proveedor de IA">
+              ${agents.map(a => `<option value="${a[2]}" ${agentStates[a[2]] ? "" : "disabled"}>${a[0]}</option>`).join("")}
+            </select>
+          </div>
+          <button class="btn primary live-send" id="send" ${paused ? "disabled" : ""}>Enviar a JARVIS ↗</button>
+          <p class="muted" id="chatStatus">Conectado al chat central de JARVIS CORE.</p>
+          <div class="chatlog" id="chatlog">
+            ${messages.slice(0,4).map(x => `<div class="bubble user"><b>Tú</b><br>${escapeHtml(x.q)}</div><div class="bubble"><b>${escapeHtml(x.p)}</b><br>${escapeHtml(x.a)}</div>`).join("")}
+          </div>
+        </div>
+        <p class="live-footnote">La voz utiliza las funciones de audio disponibles en tu navegador. El micrófono requiere permiso y conexión HTTPS.</p>
+      </section>
+    `;
   } else if (active === "board") {
     html = `
       <div class="card">
@@ -354,6 +390,7 @@ function render() {
 
   const check = $("#checkProviders");
   if (check) check.onclick = loadProviders;
+  if (window.initJarvisLive) window.initJarvisLive();
 }
 
 function taskList() {
@@ -482,7 +519,10 @@ async function sendChat() {
 
   const newStatus = $("#chatStatus");
   if (newStatus) newStatus.textContent = "Solicitud finalizada.";
+  if (window.JARVIS_AUTO_SPEAK && typeof window.speakJarvis === "function") window.speakJarvis(finalAnswer);
 }
+
+window.jarvisSendChat = sendChat;
 
 async function loadProviders() {
   const box = $("#providers");
