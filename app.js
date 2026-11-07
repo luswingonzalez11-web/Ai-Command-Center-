@@ -2,8 +2,8 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.3.0";
-const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/upgrade/command-center-v3/version.json";
+const APP_BUILD_VERSION = "2.5.0";
+const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
 let jarvisUpdateStatus = "checking";
 let jarvisLatestVersion = APP_BUILD_VERSION;
@@ -346,6 +346,7 @@ function render() {
               <div class="chat-message chat-user">
                 <div class="chat-author">TÚ</div>
                 <div class="chat-copy">${escapeHtml(x.q)}</div>
+                ${x.imageNames?.length ? `<div class="chat-image-label">📷 ${x.imageNames.map(escapeHtml).join(" · ")}</div>` : ""}
               </div>
               ${x.results ? x.results.map(r => `
                 <div class="chat-message chat-agent">
@@ -361,6 +362,12 @@ function render() {
           `).join("")}
         </section>
         <div class="chat-composer">
+          <div class="chat-attachment-row">
+            <label class="btn chat-attach-button" for="chatImages">＋ Fotos</label>
+            <input id="chatImages" class="chat-image-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+            <span class="chat-attachment-hint">JPG, PNG, WEBP o GIF · máximo 4 fotos</span>
+          </div>
+          <div id="chatImagePreview" class="chat-image-preview" aria-live="polite"></div>
           <textarea id="prompt" rows="1" placeholder="Escribe un mensaje a JARVIS..." aria-label="Mensaje para JARVIS"></textarea>
           <button class="btn primary" id="send" ${paused ? "disabled" : ""} aria-label="Enviar mensaje">
             ${paused ? "Pausado" : "Enviar ↗"}
@@ -521,6 +528,8 @@ function render() {
 
   const send = $("#send");
   if (send) send.onclick = sendChat;
+  const imagePicker = $("#chatImages");
+  if (imagePicker) imagePicker.onchange = renderChatImagePreview;
   const chatlog = $("#chatlog");
   if (chatlog) chatlog.scrollTop = chatlog.scrollHeight;
   const prompt = $("#prompt");
@@ -700,6 +709,30 @@ window.JarvisProgress = {
   }
 };
 
+function renderChatImagePreview() {
+  const input = $("#chatImages");
+  const box = $("#chatImagePreview");
+  if (!input || !box) return;
+  const files = Array.from(input.files || []);
+  if (files.length > 4) {
+    input.value = "";
+    box.textContent = "Puedes seleccionar un máximo de 4 fotos.";
+    return;
+  }
+  box.innerHTML = files.map(file =>
+    `<span class="chat-image-chip">📷 ${escapeHtml(file.name)} <small>${(file.size / 1024 / 1024).toFixed(1)} MB</small></span>`
+  ).join("");
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen: " + file.name));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function askAgent(provider, message, tracking = {}) {
   const r = await fetch(API_BASE + "/api/chat", {
     method: "POST",
@@ -716,7 +749,8 @@ async function sendChat() {
   if (paused) return;
 
   const q = $("#prompt").value.trim();
-  if (!q) return;
+  const selectedFiles = Array.from($("#chatImages")?.files || []);
+  if (!q && !selectedFiles.length) return;
 
   const selectedMode = $("#chatMode").value;
   const send = $("#send");
@@ -732,6 +766,17 @@ async function sendChat() {
   const progress = window.JarvisProgress.start(status, "Preparando solicitud...");
 
   try {
+    if (selectedFiles.length > 4) throw new Error("Puedes adjuntar un máximo de 4 fotos.");
+    if (selectedFiles.some(file => !["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type))) {
+      throw new Error("Formato no compatible. Usa JPG, PNG, WEBP o GIF.");
+    }
+    if (selectedFiles.some(file => file.size > 6 * 1024 * 1024)) {
+      throw new Error("Cada foto debe pesar 6 MB o menos.");
+    }
+    const imagePayload = await Promise.all(selectedFiles.map(fileToDataUrl));
+    if (imagePayload.length && selectedMode !== "individual") {
+      throw new Error("Para analizar fotos, cambia a Individual Mode y selecciona OpenAI. El modo Team con imágenes llegará en una próxima actualización.");
+    }
     const savedVideoContext = (() => { try { return JSON.parse(localStorage.getItem("jarvis_active_video") || "null"); } catch (_) { return null; } })();
     const revisionRequest = !!savedVideoContext && /\b(no me gusta|corrige|corrige|arregla|cambia|mejora|modifica|hazlo|hazla|quiero que|ponle|quita|agrega|más|menos|se ve|parece|reemplaza)\b/i.test(q);
     const videoRequest = /\b(crea|crear|genera|generar|produce|producir|haz|hazme|quiero|necesito|prepara|prep[aá]rame)\b.{0,100}\b(video|mp4|short|reel|episodio|animación|animacion)\b|\b(video|mp4|short|reel|animación|animacion)\b.{0,100}\b(crea|genera|produce|haz|prepara)\b/i.test(q);
@@ -774,9 +819,16 @@ async function sendChat() {
     } else if (selectedMode === "individual") {
       const provider = $("#provider").value;
       if (!agentStates[provider]) throw new Error("Ese agente está desactivado.");
+      if (imagePayload.length && provider !== "openai") {
+        throw new Error("Selecciona OpenAI para analizar las fotos.");
+      }
 
-      progress.update("Conectando con " + (agents.find(a => a[2] === provider)?.[0] || provider) + "...");
-      const response = await askAgent(provider, q, {conversation_id: "chat-" + Date.now(), request_type: "chat"});
+      progress.update(imagePayload.length ? "Enviando fotos a OpenAI para su análisis..." : "Conectando con " + (agents.find(a => a[2] === provider)?.[0] || provider) + "...");
+      const response = await askAgent(provider, q || "Analiza la imagen adjunta y describe lo que observas.", {
+        conversation_id: "chat-" + Date.now(),
+        request_type: imagePayload.length ? "image_analysis" : "chat",
+        ...(imagePayload.length ? {images: imagePayload} : {})
+      });
       finalAnswer = response.answer || "Sin respuesta del proveedor.";
       finalName = agents.find(a => a[2] === provider)?.[0] || provider;
 
@@ -841,10 +893,11 @@ async function sendChat() {
   }
 
   messages.unshift({
-    q,
+    q: q || (selectedFiles.length ? "Analiza esta imagen." : ""),
     p: finalName,
     a: finalAnswer,
     results,
+    imageNames: selectedFiles.map(file => file.name),
     created_at: new Date().toISOString()
   });
   saveChatHistory();
