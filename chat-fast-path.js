@@ -36,7 +36,7 @@
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    if (window.jarvisPaused === true) return;
+    if (typeof paused !== "undefined" && paused) return;
     const modeSelect = document.querySelector("#chatMode");
     const providerSelect = document.querySelector("#provider");
     const providerId = modeSelect?.value === "team"
@@ -59,7 +59,6 @@
     render();
     const status = document.querySelector("#chatStatus");
     if (status) status.textContent = "Aquí estoy. Conversación lista.";
-    prompt.focus();
   }
 
   // Capture before app.js's normal click handler so greetings never trigger provider calls.
