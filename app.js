@@ -533,12 +533,15 @@ function render() {
   const chatlog = $("#chatlog");
   if (chatlog) chatlog.scrollTop = chatlog.scrollHeight;
   const prompt = $("#prompt");
-  if (prompt) prompt.addEventListener("keydown", event => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendChat();
-    }
-  });
+  if (prompt) {
+    prompt.addEventListener("paste", addPastedChatImages);
+    prompt.addEventListener("keydown", event => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChat();
+      }
+    });
+  }
 
   const chatMode = $("#chatMode");
   if (chatMode) chatMode.onchange = () => {
@@ -709,19 +712,60 @@ window.JarvisProgress = {
   }
 };
 
+let chatPreviewObjectUrls = [];
+
 function renderChatImagePreview() {
   const input = $("#chatImages");
   const box = $("#chatImagePreview");
   if (!input || !box) return;
   const files = Array.from(input.files || []);
+  chatPreviewObjectUrls.forEach(url => URL.revokeObjectURL(url));
+  chatPreviewObjectUrls = [];
   if (files.length > 4) {
     input.value = "";
     box.textContent = "Puedes seleccionar un máximo de 4 fotos.";
     return;
   }
-  box.innerHTML = files.map(file =>
-    `<span class="chat-image-chip">📷 ${escapeHtml(file.name)} <small>${(file.size / 1024 / 1024).toFixed(1)} MB</small></span>`
-  ).join("");
+  box.innerHTML = files.map((file, index) => {
+    const url = URL.createObjectURL(file);
+    chatPreviewObjectUrls.push(url);
+    return `<span class="chat-image-chip">
+      <img class="chat-image-thumb" src="${url}" alt="Vista previa de ${escapeHtml(file.name)}">
+      <span>${escapeHtml(file.name)}<small>${(file.size / 1024 / 1024).toFixed(1)} MB</small></span>
+      <button type="button" class="chat-image-remove" data-remove-chat-image="${index}" aria-label="Quitar ${escapeHtml(file.name)}">×</button>
+    </span>`;
+  }).join("");
+  box.querySelectorAll("[data-remove-chat-image]").forEach(button => {
+    button.onclick = () => {
+      const removeIndex = Number(button.dataset.removeChatImage);
+      const transfer = new DataTransfer();
+      files.forEach((file, index) => { if (index !== removeIndex) transfer.items.add(file); });
+      input.files = transfer.files;
+      renderChatImagePreview();
+    };
+  });
+}
+
+function addPastedChatImages(event) {
+  const input = $("#chatImages");
+  if (!input || !event.clipboardData) return;
+  const pasted = Array.from(event.clipboardData.items || [])
+    .filter(item => item.type && item.type.startsWith("image/"))
+    .map(item => item.getAsFile())
+    .filter(Boolean);
+  if (!pasted.length) return;
+  event.preventDefault();
+  const existing = Array.from(input.files || []);
+  const combined = [...existing, ...pasted];
+  if (combined.length > 4) {
+    const box = $("#chatImagePreview");
+    if (box) box.textContent = "Puedes adjuntar un máximo de 4 fotos.";
+    return;
+  }
+  const transfer = new DataTransfer();
+  combined.forEach(file => transfer.items.add(file));
+  input.files = transfer.files;
+  renderChatImagePreview();
 }
 
 function fileToDataUrl(file) {
@@ -824,10 +868,16 @@ async function sendChat() {
       }
 
       progress.update(imagePayload.length ? "Enviando fotos a OpenAI para su análisis..." : "Conectando con " + (agents.find(a => a[2] === provider)?.[0] || provider) + "...");
-      const response = await askAgent(provider, q || "Analiza la imagen adjunta y describe lo que observas.", {
+      const imageHistory = imagePayload.length
+        ? messages.slice(0, 6).reverse().flatMap(item => [
+            {role: "user", content: String(item.q || "").slice(0, 2500)},
+            {role: "assistant", content: String(item.a || "").slice(0, 2500)}
+          ])
+        : [];
+      const response = await askAgent(provider, q || "Analiza detalladamente la imagen adjunta y dime qué observas.", {
         conversation_id: "chat-" + Date.now(),
         request_type: imagePayload.length ? "image_analysis" : "chat",
-        ...(imagePayload.length ? {images: imagePayload} : {})
+        ...(imagePayload.length ? {images: imagePayload, history: imageHistory} : {})
       });
       finalAnswer = response.answer || "Sin respuesta del proveedor.";
       finalName = agents.find(a => a[2] === provider)?.[0] || provider;
