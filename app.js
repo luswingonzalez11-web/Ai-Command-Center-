@@ -522,6 +522,8 @@ async function sendChat() {
   if (window.JARVIS_AUTO_SPEAK && typeof window.speakJarvis === "function") window.speakJarvis(finalAnswer);
 }
 
+window.jarvisSendChat = sendChat;
+
 async function loadProviders() {
   const box = $("#providers");
   box.innerHTML = '<div class="empty">Consultando...</div>';
