@@ -15,7 +15,7 @@ def stamp(value):
     return value.isoformat()
 
 def digest(value):
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hashlib.sha256((os.getenv("JARVIS_ADMIN_TOKEN", "jarvis-local-pepper") + value).encode("utf-8")).hexdigest()
 
 def connect():
     conn = sqlite3.connect(DB_PATH, timeout=15)
