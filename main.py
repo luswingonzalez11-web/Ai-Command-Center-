@@ -2,6 +2,8 @@
 import os
 import sqlite3
 import secrets
+import time
+import base64
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +12,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from studio_api import router as studio_router, VideoAnimateRequest, animate_from_description
+from ops_api import router as ops_router
 
 load_dotenv()
 
@@ -24,18 +28,24 @@ APPROVED_EXTENSIONS = {
 }
 
 MAX_FILE_SIZE = 200_000
+GITHUB_REPO = "luswingonzalez11-web/Ai-Command-Center-"
+GITHUB_BRANCH = "feature/ai-task-video-studio"
+GITHUB_API = "https://api.github.com"
 
 app = FastAPI(
     title="JARVIS CORE API",
-    version="4.0.0"
+    version="4.2.0"
 )
+
+app.include_router(studio_router)
+app.include_router(ops_router)
 
 origin = os.getenv("CORS_ORIGIN", "*")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in origin.split(",")],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -82,6 +92,43 @@ class ChatRequest(BaseModel):
     provider: str = Field(default="openai")
     message: str = Field(min_length=1, max_length=12000)
     model: Optional[str] = None
+    conversation_id: Optional[str] = None
+    task_id: Optional[str] = None
+    request_type: str = "chat"
+    images: list[str] = Field(default_factory=list, max_length=4)
+    history: list[dict] = Field(default_factory=list, max_length=12)
+
+
+MAX_CHAT_IMAGE_BYTES = 6 * 1024 * 1024
+ALLOWED_CHAT_IMAGE_TYPES = {
+    "data:image/jpeg;base64",
+    "data:image/png;base64",
+    "data:image/webp;base64",
+    "data:image/gif;base64",
+}
+
+
+def validate_chat_images(images: list[str]) -> list[str]:
+    if len(images) > 4:
+        raise HTTPException(400, "Puedes adjuntar un máximo de 4 imágenes por mensaje.")
+
+    validated = []
+    for image_data in images:
+        if not isinstance(image_data, str) or "," not in image_data:
+            raise HTTPException(400, "Formato de imagen no válido.")
+        header, payload = image_data.split(",", 1)
+        if header.lower() not in ALLOWED_CHAT_IMAGE_TYPES:
+            raise HTTPException(415, "Formato no compatible. Usa JPG, PNG, WEBP o GIF.")
+        try:
+            decoded = base64.b64decode(payload, validate=True)
+        except Exception:
+            raise HTTPException(400, "La imagen adjunta está dañada o no es válida.")
+        if not decoded:
+            raise HTTPException(400, "La imagen adjunta está vacía.")
+        if len(decoded) > MAX_CHAT_IMAGE_BYTES:
+            raise HTTPException(413, "Cada imagen debe pesar 6 MB o menos.")
+        validated.append(image_data)
+    return validated
 
 
 class TaskRequest(BaseModel):
@@ -105,9 +152,9 @@ class DevReadRequest(BaseModel):
 PROVIDERS = {
     "openai": {
         "key": "OPENAI_API_KEY",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "model": "gpt-4o-mini",
-        "kind": "openai",
+        "url": "https://api.openai.com/v1/responses",
+        "model": "gpt-6-astra",
+        "kind": "openai_responses",
     },
     "deepseek": {
         "key": "DEEPSEEK_API_KEY",
@@ -299,7 +346,25 @@ def build_agent_system_prompt(provider: str) -> str:
         "Eres un agente autorizado de JARVIS CORE."
     )
 
-    return JARVIS_IDENTITY + "\n\n" + role
+    conversational_style = """
+ESTILO DE CONVERSACIÓN NATURAL — PRIORIDAD ALTA:
+Habla como un asistente cercano, atento y genuino, no como un robot ni como un manual. Mantén una conversación fluida y adapta el tono al usuario sin imitarlo de forma exagerada.
+
+- Responde primero a lo que la persona realmente quiso decir. Si es un saludo, una reacción o una frase casual, contesta de forma breve y natural; no conviertas cada mensaje en una explicación.
+- Usa el contexto disponible y enlaza las respuestas con lo que ya se viene hablando. No vuelvas a presentarte ni repitas información que la persona ya conoce.
+- Evita introducciones prefabricadas y frases de relleno. No empieces siempre con «Claro, aquí tienes», «Por supuesto» o «Como modelo de IA».
+- No fuerces listas, títulos, resúmenes ni conclusiones en respuestas sencillas. Úsalos solo cuando ayuden a entender información extensa o varios pasos.
+- Escribe en párrafos cortos, con lenguaje cotidiano, claro y cálido. Usa Markdown con moderación para facilitar la lectura.
+- Evita separadores horizontales, encabezados innecesarios, repeticiones y tono corporativo.
+- Haz una sola pregunta concreta cuando falte un dato esencial.
+- Sé empático sin exagerar emociones, emojis ni familiaridad. Ajusta el nivel de formalidad al tono del usuario y conserva su idioma.
+- Sé directo y honesto. No inventes recuerdos, acciones, capacidades, resultados ni certezas.
+- En modo Team, la síntesis debe sonar como una conversación coherente de JARVIS, no como un informe pegado de varios agentes. Integra las ideas y menciona desacuerdos solo cuando importen.
+- En explicaciones técnicas, mantén precisión, pero explica como un buen compañero, con ejemplos sencillos cuando hagan falta.
+
+La naturalidad nunca debe sacrificar exactitud, seguridad ni claridad.
+"""
+    return JARVIS_IDENTITY + "\n\n" + role + "\n\n" + conversational_style + "\n\nJARVIS es la inteligencia compuesta del equipo, no un sexto agente. Conserva tu especialidad, comparte contexto y prioriza entregar trabajo en el módulo correcto. No pidas repetir datos ya presentes. Si recibes una propuesta de video, sigue el flujo de producción de Video Studio en vez de limitarte a aconsejar."
 
 
 # --------------------------------------------------
@@ -359,7 +424,7 @@ def health():
     return {
         "status": "ok",
         "service": "JARVIS CORE API",
-        "version": "4.0.0",
+        "version": app.version,
         "identity_system": True,
         "agents": list(AGENT_ROLES.keys())
     }
@@ -399,6 +464,93 @@ def providers():
 # CHAT WITH SERVER IDENTITY
 # --------------------------------------------------
 
+async def save_usage_metric(metric: dict):
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not base or not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(base + "/rest/v1/ai_usage_metrics",
+                headers={"apikey": key, "Authorization": "Bearer " + key,
+                         "Content-Type": "application/json", "Prefer": "return=minimal"},
+                json=metric)
+    except Exception:
+        pass
+
+
+@app.get("/api/usage/summary")
+async def usage_summary():
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not base or not key:
+        raise HTTPException(503, "La analítica requiere configuración de Supabase.")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(base + "/rest/v1/ai_usage_metrics",
+                headers={"apikey": key, "Authorization": "Bearer " + key},
+                params={"select": "id,provider,model,request_type,latency_ms,input_tokens,output_tokens,total_tokens,token_source,success,created_at,conversation_id,task_id",
+                        "order": "created_at.desc", "limit": "500"})
+        if response.is_error:
+            raise HTTPException(502, "No se pudieron consultar las métricas.")
+        rows = response.json()
+        total = len(rows)
+        totals = {
+            "requests": total,
+            "successful": sum(1 for x in rows if x.get("success")),
+            "failed": sum(1 for x in rows if not x.get("success")),
+            "tokens": sum(x.get("total_tokens") or 0 for x in rows),
+            "input_tokens": sum(x.get("input_tokens") or 0 for x in rows),
+            "output_tokens": sum(x.get("output_tokens") or 0 for x in rows),
+            "average_latency_ms": round(sum(x.get("latency_ms") or 0 for x in rows) / total) if total else None,
+            "token_records": sum(1 for x in rows if x.get("total_tokens") is not None)
+        }
+        grouped = {}
+        for row in rows:
+            p = row["provider"]
+            g = grouped.setdefault(p, {"provider": p, "requests": 0, "tokens": 0, "latencies": []})
+            g["requests"] += 1
+            g["tokens"] += row.get("total_tokens") or 0
+            if row.get("latency_ms") is not None:
+                g["latencies"].append(row["latency_ms"])
+        by_provider = [{"provider": g["provider"], "requests": g["requests"], "tokens": g["tokens"],
+                        "average_latency_ms": round(sum(g["latencies"]) / len(g["latencies"])) if g["latencies"] else None}
+                       for g in grouped.values()]
+        return {"totals": totals, "by_provider": by_provider, "recent": rows[:100], "window": "latest_500_requests"}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "Error consultando analítica.")
+
+
+class VideoProduceRequest(BaseModel):
+    prompt: str = Field(min_length=8, max_length=8000)
+    provider: str = "openai"
+    title: Optional[str] = Field(default=None, max_length=120)
+    task_id: Optional[str] = None
+    voice_enabled: bool = False
+
+@app.post("/api/video/produce")
+async def produce_video(req: VideoProduceRequest):
+    provider = req.provider.lower()
+    if provider not in PROVIDERS:
+        raise HTTPException(400, "Proveedor no soportado para producción.")
+    title = (req.title or req.prompt.strip().splitlines()[0])[:120]
+    prompt = ("Eres guionista y director de cortos 2D de terror analógico para TikTok/Shorts. Escribe una microhistoria cinematográfica con gancho inmediato, tensión progresiva, detalles concretos y un giro o imagen final inquietante. No expliques el monstruo ni reveles todo al principio. Devuelve SOLO 4 escenas narrativas en español, una por línea, sin numeración, títulos ni markdown. Cada línea debe ser una frase breve que pueda aparecer como subtítulo de máquina de escribir y describir una acción visual específica que el motor pueda ilustrar. Alterna planos/escenarios y mantén continuidad de personajes, ropa, objetos y lugar. Deja pausas sugeridas con frases cortas. No escribas instrucciones técnicas ni etiquetas de cámara.\n\nPROPUESTA:\n" + req.prompt)
+    result = await chat(ChatRequest(provider=provider, message=prompt, task_id=req.task_id, request_type='video_script'))
+    script = "\n".join(line.strip().lstrip("0123456789.-) ").strip() for line in result["answer"].splitlines() if line.strip() and not line.strip().startswith("```"))
+    if len(script) < 20:
+        raise HTTPException(502, "El agente no produjo un guion suficiente para generar el video.")
+    # Reuse the same Claude-powered 2D animation engine used by Video Studio.
+    # The selected chat agent writes the script; the Studio renderer creates and stores the MP4.
+    rendered = await animate_from_description(VideoAnimateRequest(
+        title=title,
+        prompt=script,
+        audio_enabled=True,
+        audio_volume=0.55
+    ))
+    return {"status":"completed","title":title,"provider":provider,"script":script,"video":rendered,"message":"MP4 generado y registrado en AI Task & Video Studio."}
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     name = req.provider.lower()
@@ -417,12 +569,96 @@ async def chat(req: ChatRequest):
 
     model = req.model or cfg["model"]
     system_prompt = build_agent_system_prompt(name)
+    image_inputs = validate_chat_images(req.images)
+    if image_inputs and name != "openai":
+        raise HTTPException(400, "El análisis de fotos está disponible con OpenAI. Selecciona OpenAI en modo individual.")
+
+    # Keep a short, sanitized conversational context so image follow-ups make sense.
+    history_messages = []
+    for item in req.history[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            history_messages.append({"role": role, "content": content[:4000]})
+
+    if image_inputs:
+        system_prompt += """
+
+CAPACIDAD DE VISIÓN — INSTRUCCIONES IMPORTANTES:
+Analiza visualmente todas las imágenes adjuntas con atención. No te limites a decir que hay una imagen.
+Describe los elementos relevantes, relaciones, texto legible, detalles pequeños y posibles anomalías.
+Responde primero a la pregunta concreta del usuario; si no hizo una pregunta, ofrece un análisis claro y útil.
+Distingue lo que realmente se ve de lo que solo puede inferirse. No inventes texto, marcas, medidas ni detalles ilegibles.
+Si la imagen es una captura, documento, gráfico, vehículo u objeto técnico, adapta el análisis al contenido.
+Si algo no puede determinarse con seguridad, dilo claramente. Mantén el contexto de los mensajes anteriores.
+Responde en el idioma del usuario.
+"""
+    started_at = time.perf_counter()
+    usage = {}
 
     try:
         async with httpx.AsyncClient(timeout=90) as client:
 
-            # OPENAI, DEEPSEEK AND GROK
-            if cfg["kind"] == "openai":
+            # OPENAI RESPONSES API
+            if cfg["kind"] == "openai_responses":
+                r = await client.post(
+                    cfg["url"],
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": model,
+                        "instructions": system_prompt,
+                        "input": (
+                            history_messages + [{
+                                "role": "user",
+                                "content": (
+                                    [
+                                        {"type": "input_text", "text": req.message},
+                                        *[
+                                            {
+                                                "type": "input_image",
+                                                "image_url": image_data,
+                                                "detail": "high"
+                                            }
+                                            for image_data in image_inputs
+                                        ]
+                                    ]
+                                    if image_inputs else req.message
+                                )
+                            }]
+                            if image_inputs or history_messages else req.message
+                        )
+                    }
+                )
+
+                data = r.json()
+
+                if r.is_error:
+                    error = data.get("error", {})
+                    raise HTTPException(
+                        r.status_code,
+                        error.get("message", "Error de OpenAI.")
+                    )
+
+                answer_parts = []
+                for item in data.get("output", []):
+                    if item.get("type") == "message":
+                        for part in item.get("content", []):
+                            if part.get("type") in ("output_text", "text"):
+                                answer_parts.append(part.get("text", ""))
+                answer = "".join(answer_parts).strip()
+
+                if not answer:
+                    raise HTTPException(502, "OpenAI no devolvió texto en la respuesta.")
+
+                usage = data.get("usage") or {}
+
+            # DEEPSEEK AND GROK (CHAT COMPLETIONS COMPATIBLE)
+            elif cfg["kind"] == "openai":
                 r = await client.post(
                     cfg["url"],
                     headers={
@@ -455,6 +691,7 @@ async def chat(req: ChatRequest):
                     )
 
                 answer = data["choices"][0]["message"]["content"]
+                usage = data.get("usage") or {}
 
             # CLAUDE
             elif cfg["kind"] == "claude":
@@ -501,6 +738,7 @@ async def chat(req: ChatRequest):
                     for item in data.get("content", [])
                     if item.get("type") == "text"
                 )
+                usage = data.get("usage") or {}
 
             # GEMINI
             else:
@@ -552,10 +790,27 @@ async def chat(req: ChatRequest):
                     for part in parts
                     if "text" in part
                 )
+                usage = data.get("usageMetadata") or {}
 
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", usage.get("promptTokenCount")))
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens", usage.get("candidatesTokenCount")))
+        total_tokens = usage.get("total_tokens", usage.get("totalTokenCount"))
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = int(input_tokens) + int(output_tokens)
+        metric = {
+            "conversation_id": req.conversation_id, "task_id": req.task_id,
+            "provider": name, "model": model, "request_type": req.request_type,
+            "latency_ms": latency_ms, "input_tokens": input_tokens,
+            "output_tokens": output_tokens, "total_tokens": total_tokens,
+            "token_source": "provider" if input_tokens is not None or output_tokens is not None else "unavailable",
+            "success": True
+        }
+        await save_usage_metric(metric)
         return {
             "provider": name,
             "model": model,
+            "metrics": metric,
             "system": "JARVIS CORE",
             "identity_loaded": True,
             "role": AGENT_ROLES[name].strip(),
@@ -575,6 +830,84 @@ async def chat(req: ChatRequest):
 # --------------------------------------------------
 # DEVELOPER ACCESS
 # --------------------------------------------------
+
+def github_headers():
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise HTTPException(503, "Falta configurar GITHUB_TOKEN en Render.")
+    return {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+
+
+def validate_github_developer(provider: str, filename: str):
+    check_developer(provider.lower())
+    if filename not in {"app.js", "style.css", "index.html", "studio.js"}:
+        raise HTTPException(403, "Archivo protegido. Solo se permiten archivos visuales en esta fase.")
+    return filename
+
+
+class GitHubReadRequest(BaseModel):
+    filename: str
+    provider: str
+
+
+class GitHubCommitRequest(BaseModel):
+    filename: str
+    provider: str
+    content: str = Field(min_length=1, max_length=200000)
+    message: str = Field(min_length=5, max_length=120)
+
+
+async def github_get_file(filename: str):
+    url = GITHUB_API + "/repos/" + GITHUB_REPO + "/contents/" + filename
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(url, headers=github_headers(), params={"ref": GITHUB_BRANCH})
+    if response.status_code == 404:
+        return None
+    if response.is_error:
+        raise HTTPException(502, "GitHub no pudo leer el archivo.")
+    return response.json()
+
+
+@app.get("/api/dev/github/status")
+def github_developer_status(x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    return {"configured": bool(os.getenv("GITHUB_TOKEN")), "repository": GITHUB_REPO, "branch": GITHUB_BRANCH, "authorized_agents": ["openai", "claude"], "editable_files": ["app.js", "style.css", "index.html", "studio.js"], "production_branch_access": False}
+
+
+@app.post("/api/dev/github/read")
+async def github_developer_read(req: GitHubReadRequest, x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    filename = validate_github_developer(req.provider, req.filename)
+    item = await github_get_file(filename)
+    if not item:
+        raise HTTPException(404, "Archivo no encontrado en la rama de desarrollo.")
+    import base64
+    content = base64.b64decode(item["content"]).decode("utf-8")
+    return {"filename": filename, "branch": GITHUB_BRANCH, "content": content, "sha": item.get("sha")}
+
+
+@app.post("/api/dev/github/commit")
+async def github_developer_commit(req: GitHubCommitRequest, x_jarvis_admin_token: Optional[str] = Header(default=None)):
+    require_admin(x_jarvis_admin_token)
+    filename = validate_github_developer(req.provider, req.filename)
+    if len(req.content.encode("utf-8")) > MAX_FILE_SIZE:
+        raise HTTPException(413, "El archivo supera el límite permitido.")
+    current = await github_get_file(filename)
+    import base64
+    payload = {"message": "JARVIS CORE: " + req.message, "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"), "branch": GITHUB_BRANCH}
+    if current:
+        payload["sha"] = current.get("sha")
+    url = GITHUB_API + "/repos/" + GITHUB_REPO + "/contents/" + filename
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.put(url, headers=github_headers(), json=payload)
+    if response.status_code in (409, 422):
+        raise HTTPException(409, "Conflicto de versión. Vuelve a leer el archivo.")
+    if response.is_error:
+        raise HTTPException(502, "GitHub rechazó el cambio. Comprueba el token y sus permisos.")
+    result = response.json()
+    commit = result.get("commit", {})
+    return {"status": "committed", "provider": req.provider, "filename": filename, "repository": GITHUB_REPO, "branch": GITHUB_BRANCH, "commit_sha": commit.get("sha"), "commit_url": commit.get("html_url"), "production_deployed": False}
+
 
 @app.get("/api/dev/status")
 def developer_status(

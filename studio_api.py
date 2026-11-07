@@ -1,0 +1,925 @@
+import os
+import json
+import re
+import sqlite3
+import uuid
+import subprocess
+import tempfile
+import textwrap
+import asyncio
+import httpx
+from pathlib import Path
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel, Field
+
+router = APIRouter(prefix="/api/studio", tags=["Task Manager & Video Studio"])
+BASE = Path(__file__).resolve().parent
+DB = BASE / "jarvis_studio.db"
+VIDEO_DIR = BASE / "uploads" / "videos"
+VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+RENDER_DIR = BASE / "uploads" / "renders"
+RENDER_DIR.mkdir(parents=True, exist_ok=True)
+MAX_VIDEO_BYTES = 250 * 1024 * 1024
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
+
+def connect():
+    c = sqlite3.connect(DB)
+    c.row_factory = sqlite3.Row
+    return c
+
+def supabase_storage_config():
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not base or not key:
+        raise HTTPException(503, "El almacenamiento permanente no está configurado. Revisa SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en Render.")
+    return base, key
+
+
+async def persist_generated_video(target: Path, title: str, description: str, filename: str):
+    """Upload MP4 to private Supabase Storage and persist its library metadata."""
+    base, key = supabase_storage_config()
+    headers = {"apikey": key, "Authorization": "Bearer " + key}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=20.0)) as client:
+            with target.open("rb") as stream:
+                uploaded = await client.post(
+                    base + "/storage/v1/object/jarvis-videos/" + filename,
+                    headers={**headers, "Content-Type": "video/mp4", "x-upsert": "true"},
+                    content=stream.read()
+                )
+            if uploaded.is_error:
+                raise RuntimeError("Supabase Storage rechazó el MP4: " + uploaded.text[:350])
+            metadata = await client.post(
+                base + "/rest/v1/studio_video_assets?select=*",
+                headers={**headers, "Content-Type": "application/json", "Prefer": "return=representation"},
+                json={"title": title[:180], "description": description[:4000],
+                      "filename": filename, "media_type": "video/mp4",
+                      "size_bytes": target.stat().st_size, "status": "review"}
+            )
+            if metadata.is_error:
+                raise RuntimeError("El MP4 se subió, pero no se pudo registrar en la biblioteca: " + metadata.text[:350])
+            rows = metadata.json()
+            if not rows:
+                raise RuntimeError("Supabase no confirmó el registro del MP4.")
+            item = rows[0]
+            item["url"] = f"/api/studio/videos/{item['id']}/file"
+            return item
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudo guardar el MP4 en almacenamiento permanente: " + str(exc)[:400])
+
+
+async def create_signed_video_url(filename: str):
+    base, key = supabase_storage_config()
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            base + "/storage/v1/object/sign/jarvis-videos/" + filename,
+            headers={"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"},
+            json={"expiresIn": 3600}
+        )
+    if response.is_error:
+        raise HTTPException(502, "No se pudo abrir el video almacenado: " + response.text[:300])
+    signed = response.json().get("signedURL") or response.json().get("signedUrl")
+    if not signed:
+        raise HTTPException(502, "Supabase no devolvió un enlace temporal para el video.")
+    if signed.startswith("http"):
+        return signed
+    if signed.startswith("/storage/v1/"):
+        return base + signed
+    return base + "/storage/v1" + (signed if signed.startswith("/") else "/" + signed)
+
+
+
+with connect() as c:
+    c.execute("""CREATE TABLE IF NOT EXISTS studio_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        estimate_minutes INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        initiative INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS studio_videos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        filename TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'review',
+        created_at TEXT NOT NULL
+    )""")
+
+class VideoRenderRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    script: str = Field(min_length=20, max_length=12000)
+    seconds_per_scene: int = Field(default=4, ge=2, le=8)
+    voice_enabled: bool = False
+    voice: str = Field(default="es-MX-DaliaNeural", pattern=r"^es-(MX|ES)-[A-Za-z]+Neural$")
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+
+class VideoAnimateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=8, max_length=6000)
+    seconds_per_scene: int = Field(default=4, ge=2, le=8)
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+
+
+
+def detect_audio_genre(text: str) -> str:
+    value = (text or "").lower()
+    if any(w in value for w in ("zombi", "infect", "virus", "brote", "cuarentena", "militar", "soldado", "laboratorio")):
+        return "horror"
+    if any(w in value for w in ("terror", "horror", "miedo", "fantasma", "demonio", "asesino", "sangre")):
+        return "horror"
+    if any(w in value for w in ("misterio", "mystery", "investigación", "secreto", "desaparecid")):
+        return "mystery"
+    if any(w in value for w in ("persecución", "explosión", "batalla", "acción", "ataque")):
+        return "action"
+    if any(w in value for w in ("espacio", "futur", "robot", "alien", "nave", "ciencia ficción")):
+        return "scifi"
+    return "suspense"
+
+
+def create_atmosphere_wav(path: Path, duration: float, text: str, volume: float = 0.55) -> str:
+    """Create an original, royalty-free procedural ambience track (no external assets)."""
+    import math
+    import random
+    import wave
+    from array import array
+
+    genre = detect_audio_genre(text)
+    sample_rate = 16000
+    total = max(1, int(sample_rate * max(1.0, duration)))
+    rng = random.Random(90409)
+    samples = array("h")
+    phase_a = phase_b = phase_c = 0.0
+    frequencies = {
+        "horror": (43.0, 57.0, 91.0),
+        "suspense": (48.0, 63.0, 105.0),
+        "mystery": (55.0, 73.0, 147.0),
+        "action": (58.0, 82.0, 123.0),
+        "scifi": (62.0, 89.0, 176.0),
+    }
+    fa, fb, fc = frequencies[genre]
+    # Smooth low drones, uneasy dissonance, slow pulses and restrained static.
+    for i in range(total):
+        t = i / sample_rate
+        fade_in = min(1.0, t / 2.2)
+        fade_out = min(1.0, max(0.0, (duration - t) / 2.0))
+        envelope = fade_in * fade_out
+        wobble = 1.0 + 0.018 * math.sin(2 * math.pi * 0.13 * t)
+        phase_a += 2 * math.pi * fa * wobble / sample_rate
+        phase_b += 2 * math.pi * fb * (1.0 + 0.012 * math.sin(2 * math.pi * 0.09 * t)) / sample_rate
+        phase_c += 2 * math.pi * fc / sample_rate
+        drone = 0.42 * math.sin(phase_a) + 0.22 * math.sin(phase_b) + 0.10 * math.sin(phase_c)
+        pulse_rate = 0.22 if genre in ("horror", "suspense") else 0.12
+        pulse = max(0.0, math.sin(2 * math.pi * pulse_rate * t)) ** 10
+        noise = (rng.random() * 2.0 - 1.0) * (0.018 if genre == "horror" else 0.008)
+        # A few distant heartbeat-like thumps, not loud jump-scares.
+        thump = 0.0
+        beat = t % (3.6 if genre == "horror" else 5.0)
+        if beat < 0.16:
+            thump = math.sin(math.pi * beat / 0.16) * (0.10 if genre == "horror" else 0.045)
+        value = (drone + 0.16 * pulse + noise + thump) * envelope * max(0.0, min(1.0, volume))
+        samples.append(int(max(-1.0, min(1.0, value)) * 26000))
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(samples.tobytes())
+    return genre
+
+
+def add_video_audio(video_path: Path, audio_path: Path, ffmpeg: str, voice_present: bool = False):
+    mixed_path = video_path.with_name(video_path.stem + "_audio.mp4")
+    if voice_present:
+        command = [ffmpeg, "-y", "-i", str(video_path), "-i", str(audio_path),
+                   "-filter_complex", "[0:a]volume=1.0[voice];[1:a]volume=0.24[amb];[voice][amb]amix=inputs=2:duration=first:dropout_transition=2[a]",
+                   "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(mixed_path)]
+    else:
+        command = [ffmpeg, "-y", "-i", str(video_path), "-i", str(audio_path),
+                   "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(mixed_path)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=240)
+    if result.returncode != 0:
+        mixed_path.unlink(missing_ok=True)
+        raise RuntimeError(result.stderr[-900:])
+    video_path.unlink(missing_ok=True)
+    mixed_path.replace(video_path)
+
+
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=180)
+    description: str = Field(default="", max_length=4000)
+    initiative: bool = False
+
+def estimate(title: str, description: str) -> int:
+    text = (title + " " + description).lower()
+    score = 60
+    for words, minutes in [
+        (("simple", "texto", "etiqueta", "ajuste"), 30),
+        (("integrar", "api", "autenticación", "oauth"), 180),
+        (("video", "reproductor", "biblioteca", "subida"), 120),
+        (("backend", "base de datos", "automatizar", "multiagente"), 240),
+        (("rediseñar", "completo", "migración", "seguridad"), 360),
+    ]:
+        if any(w in text for w in words):
+            score = max(score, minutes)
+    return score
+
+@router.get("/tasks")
+def list_tasks():
+    with connect() as c:
+        rows = c.execute("SELECT * FROM studio_tasks ORDER BY id DESC LIMIT 200").fetchall()
+    return [dict(r) for r in rows]
+
+@router.post("/tasks")
+def create_task(req: TaskCreate):
+    minutes = estimate(req.title, req.description)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        cur = c.execute(
+            "INSERT INTO studio_tasks(title,description,estimate_minutes,initiative,created_at) VALUES(?,?,?,?,?)",
+            (req.title, req.description, minutes, int(req.initiative), now)
+        )
+        row = c.execute("SELECT * FROM studio_tasks WHERE id=?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+@router.post("/tasks/{task_id}/start")
+def start_task(task_id: int):
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        row = c.execute("SELECT * FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Tarea no encontrada")
+        if row["status"] == "completed":
+            raise HTTPException(409, "La tarea ya está completada")
+        c.execute("UPDATE studio_tasks SET status='in_progress', started_at=COALESCE(started_at, ?) WHERE id=?", (now, task_id))
+        updated = c.execute("SELECT * FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+    return dict(updated)
+
+@router.post("/tasks/{task_id}/complete")
+def complete_task(task_id: int):
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        row = c.execute("SELECT id FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Tarea no encontrada")
+        c.execute("UPDATE studio_tasks SET status='completed', completed_at=? WHERE id=?", (now, task_id))
+        updated = c.execute("SELECT * FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+    return dict(updated)
+
+@router.post("/tasks/{task_id}/pause")
+def pause_task(task_id: int):
+    with connect() as c:
+        row = c.execute("SELECT id FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Tarea no encontrada")
+        c.execute("UPDATE studio_tasks SET status='queued' WHERE id=?", (task_id,))
+        updated = c.execute("SELECT * FROM studio_tasks WHERE id=?", (task_id,)).fetchone()
+    return dict(updated)
+
+@router.post("/videos")
+async def upload_video(
+    title: str = Form(...),
+    description: str = Form(""),
+    file: UploadFile = File(...)
+):
+    if file.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(415, "Formato no permitido. Usa MP4, WebM o MOV.")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".mp4", ".webm", ".mov"}:
+        raise HTTPException(415, "Extensión de video no permitida.")
+    video_id = uuid.uuid4().hex
+    safe_name = video_id + suffix
+    target = VIDEO_DIR / safe_name
+    size = 0
+    try:
+        with target.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_VIDEO_BYTES:
+                    raise HTTPException(413, "El video supera el límite de 250 MB.")
+                out.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as c:
+        cur = c.execute(
+            "INSERT INTO studio_videos(title,description,filename,media_type,size_bytes,created_at) VALUES(?,?,?,?,?,?)",
+            (title[:180], description[:4000], safe_name, file.content_type, size, now)
+        )
+        row = c.execute("SELECT * FROM studio_videos WHERE id=?", (cur.lastrowid,)).fetchone()
+    item = dict(row)
+    item["url"] = f"/api/studio/videos/{item['id']}/file"
+    return item
+
+@router.get("/videos")
+async def list_videos():
+    base, key = supabase_storage_config()
+    headers = {"apikey": key, "Authorization": "Bearer " + key}
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(base + "/rest/v1/studio_video_assets",
+            headers=headers, params={"select":"*", "order":"created_at.desc", "limit":"200"})
+    if response.is_error:
+        raise HTTPException(502, "No se pudo cargar la biblioteca permanente: " + response.text[:250])
+    result = response.json()
+    for item in result:
+        item["url"] = f"/api/studio/videos/{item['id']}/file"
+    # Keep older user-uploaded files visible when they still exist on this instance.
+    with connect() as c:
+        local_rows = c.execute("SELECT * FROM studio_videos ORDER BY id DESC LIMIT 200").fetchall()
+    for row in local_rows:
+        item = dict(row)
+        if (VIDEO_DIR / item["filename"]).is_file() or (RENDER_DIR / item["filename"]).is_file():
+            item["url"] = f"/api/studio/videos/{item['id']}/file"
+            result.append(item)
+    return result
+
+
+@router.get("/videos/{video_id}/file")
+async def get_video(video_id: str):
+    from fastapi.responses import FileResponse, RedirectResponse
+    # UUID records are permanent Supabase Storage objects.
+    try:
+        base, key = supabase_storage_config()
+        headers = {"apikey": key, "Authorization": "Bearer " + key}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(base + "/rest/v1/studio_video_assets",
+                headers=headers, params={"select":"filename", "id":"eq." + video_id, "limit":"1"})
+        if response.is_error:
+            raise HTTPException(502, "No se pudo consultar el archivo en la biblioteca.")
+        rows = response.json()
+        if rows:
+            signed_url = await create_signed_video_url(rows[0]["filename"])
+            return RedirectResponse(signed_url, status_code=307)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    # Compatibility path for older locally uploaded videos.
+    try:
+        numeric_id = int(video_id)
+    except ValueError:
+        raise HTTPException(404, "Video no encontrado")
+    with connect() as c:
+        row = c.execute("SELECT * FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Video no encontrado")
+    path = VIDEO_DIR / row["filename"]
+    if not path.is_file():
+        path = RENDER_DIR / row["filename"]
+    if not path.is_file():
+        raise HTTPException(404, "El archivo antiguo ya no está en el disco temporal del servidor.")
+    return FileResponse(path, media_type=row["media_type"])
+
+
+@router.post("/videos/{video_id}/status")
+async def set_video_status(video_id: str, status: str = Form(...)):
+    if status not in {"review", "approved", "rejected", "ready_to_publish"}:
+        raise HTTPException(400, "Estado no válido")
+    try:
+        base, key = supabase_storage_config()
+        headers = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type":"application/json", "Prefer":"return=representation"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.patch(base + "/rest/v1/studio_video_assets",
+                headers=headers, params={"id":"eq." + video_id},
+                json={"status":status})
+        if response.is_error:
+            raise HTTPException(502, "No se pudo actualizar el estado del video.")
+        rows = response.json()
+        if rows:
+            item = rows[0]
+            item["url"] = f"/api/studio/videos/{video_id}/file"
+            return item
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    try:
+        numeric_id = int(video_id)
+    except ValueError:
+        raise HTTPException(404, "Video no encontrado")
+    with connect() as c:
+        row = c.execute("SELECT id FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Video no encontrado")
+        c.execute("UPDATE studio_videos SET status=? WHERE id=?", (status, numeric_id))
+        updated = c.execute("SELECT * FROM studio_videos WHERE id=?", (numeric_id,)).fetchone()
+    item = dict(updated)
+    item["url"] = f"/api/studio/videos/{video_id}/file"
+    return item
+
+
+@router.post("/videos/render")
+async def render_script_video(req: VideoRenderRequest):
+    """Create a vertical storyboard MP4 from a script."""
+    try:
+        import imageio_ffmpeg
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        raise HTTPException(503, "Faltan dependencias del motor MP4.")
+
+    scenes = [p.strip() for p in req.script.replace("\r", "").split("\n") if p.strip()]
+    if len(scenes) == 1:
+        words = scenes[0].split()
+        scenes = [" ".join(words[i:i+24]) for i in range(0, len(words), 24)]
+    scenes = scenes[:30]
+    scene_durations = [req.seconds_per_scene] * len(scenes)
+    if not scenes:
+        raise HTTPException(400, "El guion no contiene escenas.")
+
+    filename = uuid.uuid4().hex + ".mp4"
+    target = RENDER_DIR / filename
+    width, height, fps = 720, 1280, 24
+    try:
+        regular = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
+        bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 46)
+    except OSError:
+        regular, bold = ImageFont.load_default(), ImageFont.load_default()
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "frames.txt"
+            with manifest.open("w", encoding="utf-8") as listing:
+                for scene_no, scene in enumerate(scenes):
+                    for frame_no in range(req.seconds_per_scene * fps):
+                        # Procedural, scene-aware artwork: no image API or paid credits.
+                        lower = scene.lower()
+                        palettes = [
+                            ((5, 14, 29), (8, 43, 61), (25, 190, 220)),
+                            ((22, 8, 30), (75, 20, 55), (245, 80, 110)),
+                            ((8, 24, 18), (20, 75, 48), (100, 220, 150)),
+                            ((25, 18, 7), (90, 58, 18), (245, 185, 75))
+                        ]
+                        bg, glow, accent = palettes[scene_no % len(palettes)]
+                        if any(k in lower for k in ("laboratorio", "virus", "infect", "zombi", "brote", "sangre")):
+                            bg, glow, accent = (18, 5, 12), (95, 18, 35), (235, 55, 75)
+                        elif any(k in lower for k in ("militar", "soldado", "ejército", "base", "arma")):
+                            bg, glow, accent = (12, 22, 17), (45, 65, 40), (180, 195, 125)
+                        elif any(k in lower for k in ("noche", "oscuro", "sombra", "miedo", "misterio")):
+                            bg, glow, accent = (5, 8, 25), (30, 32, 75), (115, 125, 245)
+                        image = Image.new("RGB", (width, height), bg)
+                        draw = ImageDraw.Draw(image)
+                        shift = int(35 * frame_no / max(1, req.seconds_per_scene * fps - 1))
+                        draw.rectangle((0, 0, width, 12), fill=accent)
+                        # Layered atmospheric rings and a focal illustration.
+                        for radius in (250, 205, 155, 105):
+                            cx, cy = 360 + shift, 390
+                            draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline=glow, width=5)
+                        if any(k in lower for k in ("laboratorio", "virus", "infect", "zombi", "brote")):
+                            draw.ellipse((250+shift, 245, 470+shift, 465), fill=glow, outline=accent, width=7)
+                            draw.ellipse((300+shift, 295, 420+shift, 415), outline=accent, width=5)
+                            draw.line((270+shift, 355, 450+shift, 355), fill=accent, width=5)
+                            draw.line((360+shift, 255, 360+shift, 455), fill=accent, width=5)
+                        elif any(k in lower for k in ("militar", "soldado", "ejército", "base")):
+                            draw.rectangle((285+shift, 250, 435+shift, 500), fill=glow, outline=accent, width=6)
+                            draw.polygon([(285+shift,250),(360+shift,175),(435+shift,250)], fill=glow, outline=accent)
+                            draw.rectangle((330+shift, 330, 390+shift, 500), outline=accent, width=5)
+                        else:
+                            draw.ellipse((245+shift, 235, 475+shift, 465), fill=glow, outline=accent, width=7)
+                            draw.ellipse((305+shift, 295, 415+shift, 405), outline=accent, width=5)
+                        draw.text((48, 65), "JARVIS CORE / VIDEO STUDIO", font=regular, fill=accent)
+                        draw.text((48, 545), "ESCENA " + str(scene_no + 1).zfill(2), font=bold, fill=(235, 249, 255))
+                        y = 640
+                        for line in textwrap.wrap(scene, width=29)[:9]:
+                            draw.text((48, y), line, font=regular, fill=(232, 242, 250))
+                            y += 52
+                        draw.rectangle((48, 1170, 672, 1178), fill=(35, 62, 78))
+                        draw.rectangle((48, 1170, 48 + int(624 * ((scene_no + 1) / len(scenes))), 1178), fill=(38, 211, 232))
+                        frame_name = "frame_" + str(scene_no).zfill(3) + "_" + str(frame_no).zfill(4) + ".jpg"
+                        frame_path = Path(tmp) / frame_name
+                        image.save(frame_path, quality=88)
+                        listing.write("file '" + str(frame_path) + "'\n")
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            result = subprocess.run(
+                [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+                 "-r", str(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", str(target)],
+                capture_output=True, text=True, timeout=240
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-1000:])
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(500, "No se pudo crear el MP4: " + str(exc)[:400])
+
+    # Export a synchronized SRT subtitle track alongside the MP4.
+    subtitle_name = Path(filename).with_suffix(".srt").name
+    subtitle_path = RENDER_DIR / subtitle_name
+    def srt_time(seconds):
+        whole = int(seconds)
+        millis = int(round((seconds - whole) * 1000))
+        if millis == 1000:
+            whole += 1
+            millis = 0
+        hours, rem = divmod(whole, 3600)
+        minutes, secs = divmod(rem, 60)
+        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+    with subtitle_path.open("w", encoding="utf-8") as srt:
+        for index, scene in enumerate(scenes):
+            start = index * req.seconds_per_scene
+            end = start + req.seconds_per_scene
+            srt.write(f"{index + 1}\\n{srt_time(start)} --> {srt_time(end)}\\n{scene}\\n\\n")
+
+    voice_status = "disabled"
+    if req.voice_enabled:
+        try:
+            import edge_tts
+            audio_path = RENDER_DIR / (Path(filename).stem + ".mp3")
+            speech_text = " ".join(scenes)
+            async def create_voice():
+                communicate = edge_tts.Communicate(speech_text, req.voice)
+                await communicate.save(str(audio_path))
+            await create_voice()
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            voiced_path = RENDER_DIR / (Path(filename).stem + "_voiced.mp4")
+            mux = subprocess.run(
+                [ffmpeg, "-y", "-i", str(target), "-i", str(audio_path),
+                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                 "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags",
+                 "+faststart", str(voiced_path)],
+                capture_output=True, text=True, timeout=240
+            )
+            audio_path.unlink(missing_ok=True)
+            if mux.returncode != 0:
+                voiced_path.unlink(missing_ok=True)
+                raise RuntimeError(mux.stderr[-800:])
+            target.unlink(missing_ok=True)
+            voiced_path.replace(target)
+            voice_status = "generated"
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            subtitle_path.unlink(missing_ok=True)
+            raise HTTPException(502, "No se pudo generar o incorporar la voz. Inténtalo de nuevo: " + str(exc)[:250])
+
+    audio_genre = "off"
+    voice_status = "not_selected"
+    # Narration is intentionally occasional, not forced on every short.
+    # A stable title hash gives roughly one narrated story in three.
+    should_narrate = (sum(ord(ch) for ch in (req.title or "")) % 3 == 0)
+    if should_narrate:
+        try:
+            import edge_tts
+            import imageio_ffmpeg
+            speech_path = RENDER_DIR / (Path(filename).stem + "_narration.mp3")
+            speech_text = " ".join(story_lines)[:5000]
+            speaker = edge_tts.Communicate(speech_text, "es-MX-DaliaNeural")
+            await speaker.save(str(speech_path))
+            voiced_path = RENDER_DIR / (Path(filename).stem + "_narrated.mp4")
+            mux = subprocess.run(
+                [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", str(target), "-i", str(speech_path),
+                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                 "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(voiced_path)],
+                capture_output=True, text=True, timeout=240
+            )
+            speech_path.unlink(missing_ok=True)
+            if mux.returncode != 0:
+                voiced_path.unlink(missing_ok=True)
+                raise RuntimeError(mux.stderr[-700:])
+            target.unlink(missing_ok=True)
+            voiced_path.replace(target)
+            voice_status = "generated"
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(502, "No se pudo generar la narración: " + str(exc)[:250])
+    if req.audio_enabled:
+        ambience_path = RENDER_DIR / (Path(filename).stem + "_ambience.wav")
+        try:
+            audio_genre = create_atmosphere_wav(ambience_path, sum(scene_durations), req.title + " " + req.script, req.audio_volume)
+            import imageio_ffmpeg
+            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe(), voice_present=(voice_status == "generated"))
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(500, "No se pudo incorporar la música ambiental: " + str(exc)[:300])
+        finally:
+            ambience_path.unlink(missing_ok=True)
+
+    # Upload to permanent object storage before reporting success.
+    saved = await persist_generated_video(target, req.title, req.script, filename)
+    return {
+        "video_id": saved["id"],
+        "library_url": f"/api/studio/videos/{saved['id']}/file",
+        "status": "review",
+        "title": req.title, "filename": filename, "scenes": len(scenes), "voice_status": voice_status,
+        "audio_status": audio_genre,
+        "duration_seconds": sum(scene_durations),
+        "scene_durations": scene_durations,
+        "download_url": f"/api/studio/videos/{saved['id']}/file",
+        "subtitle_url": "/api/studio/subtitles/" + subtitle_name
+    }
+
+
+
+
+@router.post("/videos/animate")
+async def animate_from_description(req: VideoAnimateRequest):
+    """Use Claude to draw illustrated 2D SVG scenes, then render them into an animated MP4."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Falta ANTHROPIC_API_KEY en Render.")
+    try:
+        import cairosvg
+        from PIL import Image, ImageEnhance, ImageDraw, ImageFont
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise HTTPException(503, "Falta una dependencia del motor 2D: " + str(exc))
+
+    model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        headers["anthropic-workspace-id"] = workspace_id
+    try:
+        # Generate one illustration per request. This avoids truncating four large SVGs
+        # in a single Claude response and makes each scene easier to validate.
+        scenes = []
+        async with httpx.AsyncClient(timeout=180) as client:
+            for index in range(4):
+                story_lines = [line.strip() for line in req.prompt.splitlines() if line.strip()]
+                scene_text = story_lines[index] if index < len(story_lines) else req.prompt[:500]
+                scene_prompt = (
+                    "Create a polished 2D ANALOG-HORROR STORYBOARD FRAME, not a logo, icon, poster, "
+                    "generic geometric shapes, or slideshow card. Scene " + str(index + 1) + " of 4. "
+                    "FULL STORY CONTEXT: " + req.prompt[:1200] + "\\n"
+                    "THIS SCENE MUST VISUALLY DEPICT: " + scene_text[:500] + "\\n"
+                    "Reference art direction: unsettling VHS found-footage short story. A detailed illustrated "
+                    "environment in the UPPER 58 percent: recognizable room, corridor, bedroom, laboratory, "
+                    "military checkpoint, street or other exact place named by the scene; strong foreground, "
+                    "midground and background; one memorable character/creature/object with readable silhouette; "
+                    "cinematic perspective and purposeful lighting. Use a restrained dark palette, muted colors, "
+                    "subtle purple/blue/dirty-red highlights, hand-drawn 2D shapes with layered detail. "
+                    "Reserve the LOWER 42 percent as clean near-black negative space for captions added later. "
+                    "Add a subtle CRT monitor frame around the illustration, tiny timestamp/REC details near its "
+                    "edge, and analog imperfections. Composition must change meaningfully from scene to scene. "
+                    "Do NOT put any words, captions, logos or lettering in the lower caption area. "
+                    "Return ONLY a complete SVG, 720x1280, viewBox='0 0 720 1280'. "
+                    "Use 25-65 concise SVG elements; use rect, circle, ellipse, line, polygon, path and g. "
+                    "Layer shapes to create an actual scene, not a few abstract shapes. No gradients, filters, "
+                    "external assets, scripts, foreignObject, external URLs or images. Output SVG markup only."
+                )
+                data = {}
+                raw = ""
+                for attempt in range(2):
+                    compact_prompt = scene_prompt
+                    if attempt == 1:
+                        compact_prompt = (
+                            "Draw a complete analog-horror 2D SVG story scene, not an icon. "
+                            "Scene " + str(index + 1) + ". Show this exact event: " + scene_text[:260] + ". "
+                            "Dark detailed environment, one recognizable subject, VHS surveillance framing, "
+                            "cinematic depth. Keep lower 42 percent empty and black for captions. "
+                            "SVG 720x1280 viewBox='0 0 720 1280'. Use 18-35 concise shapes. "
+                            "No external assets, scripts, text captions or explanations. SVG only."
+                        )
+                    response = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers=headers,
+                        json={"model": model, "max_tokens": 3500,
+                              "messages": [{"role": "user", "content": compact_prompt}]}
+                    )
+                    data = response.json()
+                    if response.is_error:
+                        detail = data.get("error", {}).get("message", "Error de Claude")
+                        raise HTTPException(response.status_code, "Claude: " + detail[:500])
+                    raw = "\\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+                    if data.get("stop_reason") != "max_tokens":
+                        break
+                if not raw:
+                    raise ValueError("Claude no devolvió la ilustración de la escena " + str(index + 1) + ".")
+                if data.get("stop_reason") == "max_tokens":
+                    raise ValueError("Claude superó el límite incluso con el dibujo simplificado de la escena " + str(index + 1) + ". Inténtalo otra vez.")
+                svg_match = re.search(r"<svg\b[\s\S]*?</svg>", raw, flags=re.I)
+                if not svg_match:
+                    raise ValueError("Claude no devolvió un SVG completo para la escena " + str(index + 1) + ".")
+                svg = svg_match.group(0)
+                title_match = re.search(r"<title[^>]*>([\s\S]*?)</title>", svg, flags=re.I)
+                description = re.sub(r"<[^>]+>", "", title_match.group(1)).strip() if title_match else "Escena " + str(index + 1)
+                scenes.append({"description": description[:300], "svg": svg})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudieron crear las escenas 2D: " + str(exc)[:400])
+
+    # JARVIS chooses a different duration for each scene based on its narrative role.
+    def choose_scene_duration(index, description, story):
+        text = (description + " " + story).lower()
+        if any(word in text for word in ("persecución", "ataque", "explosión", "corre", "huye", "disparo", "attack", "chase")):
+            return 3
+        if any(word in text for word in ("misterio", "suspenso", "silencio", "espera", "oscuro", "sombra", "mystery", "silence")):
+            return 6
+        if any(word in text for word in ("revelación", "descubre", "aparece", "reveal", "final", "puerta", "mensaje")):
+            return 5
+        return (4, 5, 4, 6)[index % 4]
+
+    scene_durations = [
+        choose_scene_duration(i, scene.get("description", ""), req.prompt)
+        for i, scene in enumerate(scenes)
+    ]
+    filename = uuid.uuid4().hex + ".mp4"
+    target = RENDER_DIR / filename
+    width, height, fps = 720, 1280, 20
+    descriptions = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            manifest = tmpdir / "frames.txt"
+            with manifest.open("w", encoding="utf-8") as listing:
+                for scene_index, scene in enumerate(scenes):
+                    svg = scene.get("svg", "")
+                    description = str(scene.get("description", "Escena " + str(scene_index + 1)))[:300]
+                    descriptions.append(description)
+                    lowered = svg.lower()
+                    # SVGs normally declare the official W3C namespace using http://.
+                    # Allow that exact namespace, but reject executable or externally-loaded content.
+                    if (
+                        re.search(r"<\s*script\b|<\s*foreignobject\b|\bon\w+\s*=", lowered)
+                        or re.search(r"""(?:href|src)\s*=\s*["']\s*(?:https?:|//|data:|file:)""", lowered)
+                        or re.search(r"""url\(\s*["']?\s*(?:https?:|//|data:|file:)""", lowered)
+                        or re.search(r"<!entity|<!doctype", lowered)
+                    ):
+                        raise ValueError("Claude devolvió SVG con contenido externo o no permitido.")
+                    if not re.search(r"<svg[\s>]", svg, re.I) or not re.search(r"</svg>", svg, re.I):
+                        raise ValueError("Una escena no contiene un SVG completo.")
+                    base_png = cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=width, output_height=height)
+                    base_path = tmpdir / ("scene_" + str(scene_index) + ".png")
+                    base_path.write_bytes(base_png)
+                    with Image.open(base_path) as opened:
+                        base_image = opened.convert("RGB")
+                    # Permanent analog-horror treatment: scene-specific typewriter caption,
+                    # CRT scanlines, vignette-like darkening and restrained VHS noise.
+                    caption = story_lines[scene_index] if scene_index < len(story_lines) else description
+                    canvas = base_image.copy()
+                    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    odraw = ImageDraw.Draw(overlay)
+                    odraw.rectangle((0, 735, width, height), fill=(5, 4, 8, 242))
+                    try:
+                        caption_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", 39)
+                        small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 15)
+                    except OSError:
+                        caption_font = ImageFont.load_default()
+                        small_font = ImageFont.load_default()
+                    odraw.text((42, 770), "ARCHIVO / REGISTRO " + str(scene_index + 1).zfill(2),
+                               font=small_font, fill=(160, 145, 166, 220))
+                    wrapped = textwrap.wrap(caption, width=27)[:6]
+                    y_caption = 830
+                    for caption_line in wrapped:
+                        bbox = odraw.textbbox((0, 0), caption_line, font=caption_font)
+                        line_width = bbox[2] - bbox[0]
+                        odraw.text(((width - line_width) // 2, y_caption), caption_line,
+                                   font=caption_font, fill=(226, 216, 224, 255),
+                                   stroke_width=1, stroke_fill=(75, 65, 78, 180))
+                        y_caption += 58
+                    odraw.text((width - 115, 18), "● REC", font=small_font, fill=(210, 85, 95, 230))
+                    base_image = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+                    total_frames = scene_durations[scene_index] * fps
+                    for frame_no in range(total_frames):
+                        progress = frame_no / max(1, total_frames - 1)
+                        zoom = 1.0 + 0.045 * progress
+                        scaled = base_image.resize((int(width * zoom), int(height * zoom)), Image.Resampling.LANCZOS)
+                        max_x = max(0, scaled.width - width)
+                        max_y = max(0, scaled.height - height)
+                        # Slow cinematic camera drift gives the illustrated scene motion.
+                        left = int(max_x * progress * (1 if scene_index % 2 == 0 else 0.25))
+                        top = int(max_y * progress * (0.25 if scene_index % 2 == 0 else 1))
+                        frame = scaled.crop((left, top, left + width, top + height))
+                        # CRT scanlines and occasional tape/exposure flutter.
+                        if frame_no % 7 == 0:
+                            frame = ImageEnhance.Brightness(frame).enhance(0.91)
+                        frame_draw = ImageDraw.Draw(frame)
+                        for scan_y in range(0, height, 5):
+                            frame_draw.line((0, scan_y, width, scan_y), fill=(0, 0, 0), width=1)
+                        if frame_no % 43 in (0, 1):
+                            frame_draw.rectangle((0, (frame_no * 17) % height, width, min(height, (frame_no * 17) % height + 3)),
+                                                 fill=(180, 170, 190))
+                        frame_name = "frame_" + str(scene_index).zfill(2) + "_" + str(frame_no).zfill(4) + ".jpg"
+                        frame_path = tmpdir / frame_name
+                        frame.save(frame_path, quality=90)
+                        listing.write("file '" + str(frame_path) + "'\n")
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            result = subprocess.run(
+                [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+                 "-r", str(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", str(target)],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-1200:])
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(500, "No se pudo renderizar la animación 2D: " + str(exc)[:450])
+
+    audio_genre = "off"
+    if req.audio_enabled:
+        ambience_path = RENDER_DIR / (Path(filename).stem + "_ambience.wav")
+        try:
+            audio_genre = create_atmosphere_wav(ambience_path, sum(scene_durations), req.title + " " + req.prompt, req.audio_volume)
+            import imageio_ffmpeg
+            add_video_audio(target, ambience_path, imageio_ffmpeg.get_ffmpeg_exe(), voice_present=(voice_status == "generated"))
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(500, "No se pudo incorporar la música ambiental: " + str(exc)[:300])
+        finally:
+            ambience_path.unlink(missing_ok=True)
+
+    # A render is not successful until the MP4 and metadata are in permanent storage.
+    saved = await persist_generated_video(target, req.title, req.prompt, filename)
+    return {
+        "video_id": saved["id"],
+        "title": req.title,
+        "scenes": len(scenes),
+        "duration_seconds": sum(scene_durations),
+        "filename": filename,
+        "library_url": f"/api/studio/videos/{saved['id']}/file",
+        "download_url": f"/api/studio/videos/{saved['id']}/file",
+        "scene_descriptions": descriptions,
+        "audio_status": audio_genre,
+        "voice_status": voice_status,
+        "visual_style": "analog_horror_vhs_2d",
+        "status": "review"
+    }
+
+
+
+
+class VideoChatRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=8, max_length=6000)
+    feedback: str = Field(default="", max_length=3000)
+    revision: bool = False
+    audio_enabled: bool = True
+    audio_volume: float = Field(default=0.55, ge=0.1, le=1.0)
+
+
+@router.post("/videos/chat")
+async def video_chat_control(req: VideoChatRequest):
+    """Turn chat feedback into a revised visual brief, then render a review-only 2D version."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Falta ANTHROPIC_API_KEY en Render.")
+    model = os.getenv("ANTHROPIC_VIDEO_MODEL", "claude-haiku-5-5")
+    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    instruction = (
+        "Eres el director creativo visual de JARVIS CORE. Reescribe el brief para cuatro escenas 2D verticales cinematográficas. "
+        "Conserva historia, personajes, continuidad, estética y todo lo que el usuario no pidió cambiar. "
+        "Aplica el feedback y concreta composición, apariencia, iluminación, ambiente y acción por escena. "
+        "Devuelve SOLO el brief final en español, máximo 1800 palabras.\n\n"
+        + ("BRIEF ANTERIOR:\n" + req.prompt + "\n\nFEEDBACK DEL USUARIO:\n" + req.feedback
+           if req.revision else "SOLICITUD ORIGINAL:\n" + req.prompt)
+    )
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post("https://api.anthropic.com/v1/messages", headers=headers,
+                json={"model": model, "max_tokens": 2200, "messages": [{"role": "user", "content": instruction}]})
+        data = response.json()
+        if response.is_error:
+            raise HTTPException(response.status_code, "Claude: " + data.get("error", {}).get("message", "Error de Claude")[:400])
+        improved = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+        if len(improved) < 20:
+            raise ValueError("Claude no devolvió un brief visual válido.")
+        rendered = await animate_from_description(VideoAnimateRequest(
+            title=req.title, prompt=improved[:6000], audio_enabled=req.audio_enabled, audio_volume=req.audio_volume))
+        return {**rendered, "prompt_used": improved, "revision": req.revision,
+                "message": "Nueva versión creada y guardada en revisión. No se publicó."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "No se pudo procesar la instrucción del chat: " + str(exc)[:350])
+
+
+@router.get("/subtitles/{filename}")
+def download_subtitles(filename: str):
+    from fastapi.responses import FileResponse
+    if not filename.endswith(".srt") or Path(filename).name != filename:
+        raise HTTPException(400, "Nombre de archivo no válido.")
+    path = RENDER_DIR / filename
+    if not path.is_file():
+        raise HTTPException(404, "Subtítulos no encontrados.")
+    return FileResponse(path, media_type="application/x-subrip", filename=filename)
+
+
+@router.get("/renders/{filename}")
+def download_render(filename: str):
+    from fastapi.responses import FileResponse
+    if not filename.endswith(".mp4") or Path(filename).name != filename:
+        raise HTTPException(400, "Nombre de archivo no válido.")
+    path = RENDER_DIR / filename
+    if not path.is_file():
+        raise HTTPException(404, "MP4 no encontrado.")
+    return FileResponse(path, media_type="video/mp4", filename=filename)
