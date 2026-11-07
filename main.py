@@ -3,6 +3,7 @@ import os
 import sqlite3
 import secrets
 import time
+import base64
 from pathlib import Path
 from typing import Optional
 
@@ -94,6 +95,39 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     task_id: Optional[str] = None
     request_type: str = "chat"
+    images: list[str] = Field(default_factory=list, max_length=4)
+
+
+MAX_CHAT_IMAGE_BYTES = 6 * 1024 * 1024
+ALLOWED_CHAT_IMAGE_TYPES = {
+    "data:image/jpeg;base64",
+    "data:image/png;base64",
+    "data:image/webp;base64",
+    "data:image/gif;base64",
+}
+
+
+def validate_chat_images(images: list[str]) -> list[str]:
+    if len(images) > 4:
+        raise HTTPException(400, "Puedes adjuntar un máximo de 4 imágenes por mensaje.")
+
+    validated = []
+    for image_data in images:
+        if not isinstance(image_data, str) or "," not in image_data:
+            raise HTTPException(400, "Formato de imagen no válido.")
+        header, payload = image_data.split(",", 1)
+        if header.lower() not in ALLOWED_CHAT_IMAGE_TYPES:
+            raise HTTPException(415, "Formato no compatible. Usa JPG, PNG, WEBP o GIF.")
+        try:
+            decoded = base64.b64decode(payload, validate=True)
+        except Exception:
+            raise HTTPException(400, "La imagen adjunta está dañada o no es válida.")
+        if not decoded:
+            raise HTTPException(400, "La imagen adjunta está vacía.")
+        if len(decoded) > MAX_CHAT_IMAGE_BYTES:
+            raise HTTPException(413, "Cada imagen debe pesar 6 MB o menos.")
+        validated.append(image_data)
+    return validated
 
 
 class TaskRequest(BaseModel):
@@ -516,6 +550,9 @@ async def chat(req: ChatRequest):
 
     model = req.model or cfg["model"]
     system_prompt = build_agent_system_prompt(name)
+    image_inputs = validate_chat_images(req.images)
+    if image_inputs and name != "openai":
+        raise HTTPException(400, "El análisis de fotos está disponible con OpenAI. Selecciona OpenAI en modo individual.")
     started_at = time.perf_counter()
     usage = {}
 
@@ -533,7 +570,23 @@ async def chat(req: ChatRequest):
                     json={
                         "model": model,
                         "instructions": system_prompt,
-                        "input": req.message
+                        "input": (
+                            [{
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": req.message},
+                                    *[
+                                        {
+                                            "type": "input_image",
+                                            "image_url": image_data,
+                                            "detail": "auto"
+                                        }
+                                        for image_data in image_inputs
+                                    ]
+                                ]
+                            }]
+                            if image_inputs else req.message
+                        )
                     }
                 )
 
