@@ -56,7 +56,7 @@ async def access_guard(request, call_next):
         return await call_next(request)
     authorization = request.headers.get("authorization", "")
     guest_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-    if guest_token and is_valid_guest_session(guest_token):
+    if guest_token and await is_valid_guest_session(guest_token):
         if path == "/api/chat" and request.method == "POST":
             return await call_next(request)
         if path == "/api/providers" and request.method == "GET":
