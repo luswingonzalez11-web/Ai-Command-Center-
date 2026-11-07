@@ -29,16 +29,7 @@
     const mic=$("#liveMic"), prompt=$("#prompt"), send=$("#send"), auto=$("#autoSpeak");
     window.JARVIS_AUTO_SPEAK=!!(auto&&auto.checked);
     if(auto) auto.onchange=()=>window.JARVIS_AUTO_SPEAK=auto.checked;
-    if(send) send.onclick=()=>{
-      if(!prompt.value.trim()) return;
-      window.JARVIS_AUTO_SPEAK=!!(auto&&auto.checked);
-      setState("thinking","JARVIS está pensando","Consultando el cerebro central...","Analizando tu solicitud...");
-      window.setTimeout(()=>{},0);
-      const oldStatus=$("#chatStatus");
-      if(oldStatus) oldStatus.textContent="JARVIS está procesando tu mensaje...";
-      window.sendChatOriginal?.();
-    };
-    // The main app owns the send action; wrap it once so both typed and spoken messages use the same API.
+    // Reuse the existing JARVIS chat pipeline for typed and spoken messages.
     if(send && !send.dataset.liveBound){
       send.dataset.liveBound="1";
       send.onclick=()=>{
