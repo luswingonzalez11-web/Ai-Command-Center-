@@ -253,16 +253,39 @@ function render() {
     html = `
       <div class="hero">
         <div>
-          <div class="eyebrow">CREATIVE PRODUCTION</div>
+          <div class="eyebrow">CINEMATIC STORY PRODUCTION / 9:16</div>
           <h2>AI Video Studio</h2>
-          <div class="muted">Ideas, guiones y paquetes de producción.</div>
+          <div class="muted">Historias visualmente sencillas, completas y coherentes; sin escenarios vacíos ni detalles de relleno.</div>
         </div>
         <div class="reactor">▣</div>
       </div>
-      <div class="grid">
-        ${["Generar idea", "Escribir guion", "Storyboard", "Paquete Shorts"]
-          .map(x => card(x, `<button class="btn action" data-task="${x}">Crear tarea</button>`))
-          .join("")}
+      <div class="card video-workbench">
+        <div class="video-workbench-head">
+          <div><span class="eyebrow">STORY ENGINE</span><h2>Construir una historia</h2></div>
+          <span class="pill">QUALITY GATE ON</span>
+        </div>
+        <div class="video-form-grid">
+          <label>Idea o premisa<input id="storyIdea" placeholder="Ej. Un equipo entra a una ciudad abandonada..."></label>
+          <label>Estilo visual<select id="storyStyle"><option>Roblox sencillo y completo</option><option>Roblox cinematográfico detallado</option><option>Animación 3D cinematográfica</option><option>Analog horror / VHS</option><option>Anime cinematográfico</option></select></label>
+          <label>Duración<select id="storyDuration"><option value="30">30 segundos</option><option value="45" selected>45 segundos</option><option value="60">60 segundos</option></select></label>
+          <label>Escenas<select id="storyScenes"><option value="6">6 escenas</option><option value="8" selected>8 escenas</option><option value="10">10 escenas</option><option value="12">12 escenas</option></select></label>
+          <label>Agente creativo<select id="storyAgent"><option value="openai">ChatGPT · Coordinador</option><option value="claude">Claude · Director creativo</option><option value="gemini">Gemini · Investigador</option><option value="deepseek">DeepSeek · Ingeniero</option><option value="grok">Grok · Evaluador</option></select></label>
+          <label>Intensidad visual<select id="visualDensity"><option value="medium" selected>Equilibrada · sencilla pero completa</option><option value="high">Alta · más detalles visuales</option></select></label>
+        </div>
+        <label class="video-wide-label">Detalles obligatorios<textarea id="storyDetails" rows="2" placeholder="Personajes, lugar, época, ambiente, elementos que deben aparecer..."></textarea></label>
+        <div class="video-quality-rules">
+          <b>Revisión automática incluida</b>
+          <div class="video-rule-grid">
+            <span>✓ Escenas con acción y propósito</span><span>✓ Fondos y escenarios con vida</span>
+            <span>✓ Continuidad entre escenas</span><span>✓ Personajes consistentes</span>
+            <span>✓ Cámara, iluminación y composición</span><span>✓ Rechazo y reemplazo de escenas flojas</span>
+          </div>
+        </div>
+        <button class="btn primary video-generate" id="buildStory">✧ Crear storyboard cinematográfico</button>
+        <p class="muted" id="storyStatus">El motor preparará escenas detalladas y revisará la lógica narrativa antes de aprobar el storyboard.</p>
+      </div>
+      <div class="card" id="storyResults">
+        <div class="empty">Tu storyboard aparecerá aquí con la evaluación de cada escena.</div>
       </div>
       <h3 class="sectiontitle">Cola de producción</h3>
       ${taskList()}
@@ -387,6 +410,9 @@ function render() {
       render();
     };
   });
+
+  const buildStory = $("#buildStory");
+  if (buildStory) buildStory.onclick = buildCinematicStoryboard;
 
   const check = $("#checkProviders");
   if (check) check.onclick = loadProviders;
@@ -520,6 +546,86 @@ async function sendChat() {
   const newStatus = $("#chatStatus");
   if (newStatus) newStatus.textContent = "Solicitud finalizada.";
   if (window.JARVIS_AUTO_SPEAK && typeof window.speakJarvis === "function") window.speakJarvis(finalAnswer);
+}
+
+
+async function buildCinematicStoryboard() {
+  const idea = $("#storyIdea")?.value.trim();
+  if (!idea) {
+    $("#storyStatus").textContent = "Escribe primero la idea de la historia.";
+    return;
+  }
+  const agent = $("#storyAgent").value;
+  const scenes = $("#storyScenes").value;
+  const duration = $("#storyDuration").value;
+  const style = $("#storyStyle").value;
+  const density = $("#visualDensity").value;
+  const details = $("#storyDetails").value.trim();
+  const button = $("#buildStory");
+  const status = $("#storyStatus");
+  const output = $("#storyResults");
+  button.disabled = true;
+  button.textContent = "Construyendo escenas...";
+  status.textContent = "El agente está diseñando la historia y comprobando la continuidad...";
+  output.innerHTML = '<div class="empty">Analizando narrativa, escenarios, acciones y continuidad...</div>';
+
+  const prompt = `Eres el director cinematográfico y supervisor de continuidad de JARVIS CORE.
+Crea un storyboard de YouTube Shorts vertical 9:16. Devuelve SOLO JSON válido, sin markdown, con esta estructura:
+{"title":"...","logline":"...","visual_style":"...","continuity_bible":["..."],"scenes":[{"number":1,"duration_seconds":5,"purpose":"...","visual":"...","action":"...","environment":"...","camera":"...","lighting":"...","audio":"...","transition":"...","continuity":"...","quality":"PASS"}],"quality_report":{"approved":true,"rejected_count":0,"notes":["..."]}}
+REQUISITOS NO NEGOCIABLES:
+- Exactamente ${scenes} escenas y duración total aproximada de ${duration} segundos.
+- Historia con inicio que enganche en los primeros 2 segundos, desarrollo, escalada, clímax y cierre.
+- Cada escena debe tener una acción concreta, un propósito narrativo y un cambio visual; no escenas de relleno.
+- ESTÁNDAR VISUAL: sencillo, limpio y completo. No busques hiperrealismo ni recargues cada plano. Cada escena debe incluir un fondo reconocible con 3 a 5 detalles útiles (por ejemplo: mobiliario, vegetación, edificios, herramientas o señales), profundidad básica y uno o dos detalles ambientales con movimiento cuando tenga sentido. Evita fondos vacíos, negros o genéricos, pero NO añadas objetos por rellenar.
+- Describe personajes, expresiones, poses, vestuario y posiciones. Mantén identidad, ropa, proporciones y utilería consistentes.
+- Cada escena debe especificar encuadre/movimiento de cámara, luz, audio/ambiente y transición hacia la siguiente.
+- Evita saltos ilógicos, teletransportes, objetos que aparecen/desaparecen y cambios de escenario sin transición explicada.
+- Estilo: ${style}. Densidad visual: ${density === "high" ? "DETALLE ALTO: más elementos ambientales y profundidad, siempre ordenados y sin saturar" : "EQUILIBRADA: diseño sencillo, limpio y completo, con pocos detalles relevantes y fondo reconocible; nunca vacío"}.
+- Revisa cada escena como control de calidad. Si una escena es floja, confusa, vacía o rompe continuidad, REESCRÍBELA antes de responder. No incluyas escenas rechazadas en la versión final. El reporte debe reflejar solo escenas finales aprobadas.
+- Nada de relleno verbal. Sé específico y producible.
+PREMISA: ${idea}
+DETALLES OBLIGATORIOS: ${details || "Inventa detalles coherentes con la premisa."}
+`;
+  try {
+    const answer = await askAgent(agent, prompt);
+    const clean = answer.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const data = JSON.parse(clean);
+    if (!Array.isArray(data.scenes) || data.scenes.length !== Number(scenes)) {
+      throw new Error("El agente no devolvió el número exacto de escenas. Inténtalo otra vez.");
+    }
+    const sceneCards = data.scenes.map(s => `
+      <article class="scene-card">
+        <div class="scene-card-top"><b>ESCENA ${s.number}</b><span class="pill ${String(s.quality).toUpperCase() === "PASS" ? "" : "warn"}">${escapeHtml(s.quality || "REVISAR")}</span></div>
+        <h3>${escapeHtml(s.purpose || "Acción narrativa")}</h3>
+        <p>${escapeHtml(s.visual || "")}</p>
+        <div class="scene-detail-grid">
+          <div><small>ACCIÓN</small><span>${escapeHtml(s.action || "")}</span></div>
+          <div><small>ENTORNO / FONDO</small><span>${escapeHtml(s.environment || "")}</span></div>
+          <div><small>CÁMARA</small><span>${escapeHtml(s.camera || "")}</span></div>
+          <div><small>LUZ Y AUDIO</small><span>${escapeHtml((s.lighting || "") + " · " + (s.audio || ""))}</span></div>
+          <div><small>CONTINUIDAD</small><span>${escapeHtml(s.continuity || "")}</span></div>
+          <div><small>TRANSICIÓN</small><span>${escapeHtml(s.transition || "")}</span></div>
+        </div>
+        <small class="scene-duration">${escapeHtml(s.duration_seconds)} s</small>
+      </article>
+    `).join("");
+    output.innerHTML = `
+      <div class="story-result-head"><div><span class="eyebrow">STORYBOARD / 9:16</span><h2>${escapeHtml(data.title || "Historia JARVIS")}</h2><p class="muted">${escapeHtml(data.logline || "")}</p></div><span class="pill">${data.scenes.length} ESCENAS</span></div>
+      <div class="continuity-bible"><b>Biblia de continuidad</b><ul>${(data.continuity_bible || []).map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
+      <div class="scene-stack">${sceneCards}</div>
+      <div class="quality-report"><b>Informe de calidad</b><p>${data.quality_report?.approved ? "Storyboard aprobado por revisión narrativa." : "Revisión adicional necesaria."}</p><ul>${(data.quality_report?.notes || []).map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul><small>Este control revisa el storyboard textual; la inspección y eliminación de fotogramas o clips generados requiere conectar un motor de video y análisis visual.</small></div>
+      <button class="btn" id="copyStoryboard">Copiar storyboard</button>
+    `;
+    $("#copyStoryboard").onclick = () => GenUI.copy(JSON.stringify(data, null, 2));
+    status.textContent = "Storyboard generado. Revisa las escenas antes de producir el video.";
+    tasks.unshift("Storyboard: " + (data.title || idea));
+  } catch (error) {
+    output.innerHTML = `<div class="empty">No se pudo validar el storyboard: ${escapeHtml(error.message)}. Puedes volver a intentarlo.</div>`;
+    status.textContent = "La revisión no se completó.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "✧ Crear storyboard cinematográfico";
+  }
 }
 
 window.jarvisSendChat = sendChat;
