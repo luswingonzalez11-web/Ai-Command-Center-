@@ -96,6 +96,7 @@ class ChatRequest(BaseModel):
     task_id: Optional[str] = None
     request_type: str = "chat"
     images: list[str] = Field(default_factory=list, max_length=4)
+    history: list[dict] = Field(default_factory=list, max_length=12)
 
 
 MAX_CHAT_IMAGE_BYTES = 6 * 1024 * 1024
@@ -553,6 +554,29 @@ async def chat(req: ChatRequest):
     image_inputs = validate_chat_images(req.images)
     if image_inputs and name != "openai":
         raise HTTPException(400, "El análisis de fotos está disponible con OpenAI. Selecciona OpenAI en modo individual.")
+
+    # Keep a short, sanitized conversational context so image follow-ups make sense.
+    history_messages = []
+    for item in req.history[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            history_messages.append({"role": role, "content": content[:4000]})
+
+    if image_inputs:
+        system_prompt += """
+
+CAPACIDAD DE VISIÓN — INSTRUCCIONES IMPORTANTES:
+Analiza visualmente todas las imágenes adjuntas con atención. No te limites a decir que hay una imagen.
+Describe los elementos relevantes, relaciones, texto legible, detalles pequeños y posibles anomalías.
+Responde primero a la pregunta concreta del usuario; si no hizo una pregunta, ofrece un análisis claro y útil.
+Distingue lo que realmente se ve de lo que solo puede inferirse. No inventes texto, marcas, medidas ni detalles ilegibles.
+Si la imagen es una captura, documento, gráfico, vehículo u objeto técnico, adapta el análisis al contenido.
+Si algo no puede determinarse con seguridad, dilo claramente. Mantén el contexto de los mensajes anteriores.
+Responde en el idioma del usuario.
+"""
     started_at = time.perf_counter()
     usage = {}
 
@@ -571,21 +595,24 @@ async def chat(req: ChatRequest):
                         "model": model,
                         "instructions": system_prompt,
                         "input": (
-                            [{
+                            history_messages + [{
                                 "role": "user",
-                                "content": [
-                                    {"type": "input_text", "text": req.message},
-                                    *[
-                                        {
-                                            "type": "input_image",
-                                            "image_url": image_data,
-                                            "detail": "auto"
-                                        }
-                                        for image_data in image_inputs
+                                "content": (
+                                    [
+                                        {"type": "input_text", "text": req.message},
+                                        *[
+                                            {
+                                                "type": "input_image",
+                                                "image_url": image_data,
+                                                "detail": "high"
+                                            }
+                                            for image_data in image_inputs
+                                        ]
                                     ]
-                                ]
+                                    if image_inputs else req.message
+                                )
                             }]
-                            if image_inputs else req.message
+                            if image_inputs or history_messages else req.message
                         )
                     }
                 )
