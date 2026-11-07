@@ -61,8 +61,8 @@ function nav() {
   document.querySelectorAll(".navitem").forEach(b => {
     b.onclick = () => {
       active = b.dataset.id;
+      closeMenu();
       render();
-      $("#sidebar")?.classList.remove("open");
     };
   });
 }
