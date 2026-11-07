@@ -15,9 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from studio_api import router as studio_router, VideoAnimateRequest, animate_from_description
 from ops_api import router as ops_router
-from access_security import router as access_router, is_valid_guest_session
 
 load_dotenv()
+
+from access_security import router as access_router, is_valid_guest_session
 
 BASE = Path(__file__).resolve().parent
 DB = BASE / "jarvis.db"
