@@ -253,16 +253,39 @@ function render() {
     html = `
       <div class="hero">
         <div>
-          <div class="eyebrow">CREATIVE PRODUCTION</div>
+          <div class="eyebrow">CINEMATIC STORY PRODUCTION / 9:16</div>
           <h2>AI Video Studio</h2>
-          <div class="muted">Ideas, guiones y paquetes de producción.</div>
+          <div class="muted">Historias llenas de acción, escenarios vivos y revisión inteligente escena por escena.</div>
         </div>
         <div class="reactor">▣</div>
       </div>
-      <div class="grid">
-        ${["Generar idea", "Escribir guion", "Storyboard", "Paquete Shorts"]
-          .map(x => card(x, `<button class="btn action" data-task="${x}">Crear tarea</button>`))
-          .join("")}
+      <div class="card video-workbench">
+        <div class="video-workbench-head">
+          <div><span class="eyebrow">STORY ENGINE</span><h2>Construir una historia</h2></div>
+          <span class="pill">QUALITY GATE ON</span>
+        </div>
+        <div class="video-form-grid">
+          <label>Idea o premisa<input id="storyIdea" placeholder="Ej. Un equipo entra a una ciudad abandonada..."></label>
+          <label>Estilo visual<select id="storyStyle"><option>Roblox cinematográfico detallado</option><option>Animación 3D cinematográfica</option><option>Analog horror / VHS</option><option>Anime cinematográfico</option></select></label>
+          <label>Duración<select id="storyDuration"><option value="30">30 segundos</option><option value="45" selected>45 segundos</option><option value="60">60 segundos</option></select></label>
+          <label>Escenas<select id="storyScenes"><option value="6">6 escenas</option><option value="8" selected>8 escenas</option><option value="10">10 escenas</option><option value="12">12 escenas</option></select></label>
+          <label>Agente creativo<select id="storyAgent"><option value="openai">ChatGPT · Coordinador</option><option value="claude">Claude · Director creativo</option><option value="gemini">Gemini · Investigador</option><option value="deepseek">DeepSeek · Ingeniero</option><option value="grok">Grok · Evaluador</option></select></label>
+          <label>Intensidad visual<select id="visualDensity"><option value="high">Alta · cada plano lleno de detalles</option><option value="medium">Media · equilibrada</option></select></label>
+        </div>
+        <label class="video-wide-label">Detalles obligatorios<textarea id="storyDetails" rows="2" placeholder="Personajes, lugar, época, ambiente, elementos que deben aparecer..."></textarea></label>
+        <div class="video-quality-rules">
+          <b>Revisión automática incluida</b>
+          <div class="video-rule-grid">
+            <span>✓ Escenas con acción y propósito</span><span>✓ Fondos y escenarios con vida</span>
+            <span>✓ Continuidad entre escenas</span><span>✓ Personajes consistentes</span>
+            <span>✓ Cámara, iluminación y composición</span><span>✓ Rechazo y reemplazo de escenas flojas</span>
+          </div>
+        </div>
+        <button class="btn primary video-generate" id="buildStory">✧ Crear storyboard cinematográfico</button>
+        <p class="muted" id="storyStatus">El motor preparará escenas detalladas y revisará la lógica narrativa antes de aprobar el storyboard.</p>
+      </div>
+      <div class="card" id="storyResults">
+        <div class="empty">Tu storyboard aparecerá aquí con la evaluación de cada escena.</div>
       </div>
       <h3 class="sectiontitle">Cola de producción</h3>
       ${taskList()}
@@ -387,6 +410,9 @@ function render() {
       render();
     };
   });
+
+  const buildStory = $("#buildStory");
+  if (buildStory) buildStory.onclick = buildCinematicStoryboard;
 
   const check = $("#checkProviders");
   if (check) check.onclick = loadProviders;
