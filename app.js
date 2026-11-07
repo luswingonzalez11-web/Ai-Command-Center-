@@ -255,7 +255,7 @@ function render() {
         <div>
           <div class="eyebrow">CINEMATIC STORY PRODUCTION / 9:16</div>
           <h2>AI Video Studio</h2>
-          <div class="muted">Historias llenas de acción, escenarios vivos y revisión inteligente escena por escena.</div>
+          <div class="muted">Historias visualmente sencillas, completas y coherentes; sin escenarios vacíos ni detalles de relleno.</div>
         </div>
         <div class="reactor">▣</div>
       </div>
@@ -266,11 +266,11 @@ function render() {
         </div>
         <div class="video-form-grid">
           <label>Idea o premisa<input id="storyIdea" placeholder="Ej. Un equipo entra a una ciudad abandonada..."></label>
-          <label>Estilo visual<select id="storyStyle"><option>Roblox cinematográfico detallado</option><option>Animación 3D cinematográfica</option><option>Analog horror / VHS</option><option>Anime cinematográfico</option></select></label>
+          <label>Estilo visual<select id="storyStyle"><option>Roblox sencillo y completo</option><option>Roblox cinematográfico detallado</option><option>Animación 3D cinematográfica</option><option>Analog horror / VHS</option><option>Anime cinematográfico</option></select></label>
           <label>Duración<select id="storyDuration"><option value="30">30 segundos</option><option value="45" selected>45 segundos</option><option value="60">60 segundos</option></select></label>
           <label>Escenas<select id="storyScenes"><option value="6">6 escenas</option><option value="8" selected>8 escenas</option><option value="10">10 escenas</option><option value="12">12 escenas</option></select></label>
           <label>Agente creativo<select id="storyAgent"><option value="openai">ChatGPT · Coordinador</option><option value="claude">Claude · Director creativo</option><option value="gemini">Gemini · Investigador</option><option value="deepseek">DeepSeek · Ingeniero</option><option value="grok">Grok · Evaluador</option></select></label>
-          <label>Intensidad visual<select id="visualDensity"><option value="high">Alta · cada plano lleno de detalles</option><option value="medium">Media · equilibrada</option></select></label>
+          <label>Intensidad visual<select id="visualDensity"><option value="medium" selected>Equilibrada · sencilla pero completa</option><option value="high">Alta · más detalles visuales</option></select></label>
         </div>
         <label class="video-wide-label">Detalles obligatorios<textarea id="storyDetails" rows="2" placeholder="Personajes, lugar, época, ambiente, elementos que deben aparecer..."></textarea></label>
         <div class="video-quality-rules">
@@ -576,11 +576,11 @@ REQUISITOS NO NEGOCIABLES:
 - Exactamente ${scenes} escenas y duración total aproximada de ${duration} segundos.
 - Historia con inicio que enganche en los primeros 2 segundos, desarrollo, escalada, clímax y cierre.
 - Cada escena debe tener una acción concreta, un propósito narrativo y un cambio visual; no escenas de relleno.
-- NUNCA dejes fondos vacíos, negros, genéricos o sin describir. Cada entorno debe tener capas, objetos, profundidad, movimiento ambiental, detalles de iluminación y elementos secundarios relevantes.
+- ESTÁNDAR VISUAL: sencillo, limpio y completo. No busques hiperrealismo ni recargues cada plano. Cada escena debe incluir un fondo reconocible con 3 a 5 detalles útiles (por ejemplo: mobiliario, vegetación, edificios, herramientas o señales), profundidad básica y uno o dos detalles ambientales con movimiento cuando tenga sentido. Evita fondos vacíos, negros o genéricos, pero NO añadas objetos por rellenar.
 - Describe personajes, expresiones, poses, vestuario y posiciones. Mantén identidad, ropa, proporciones y utilería consistentes.
 - Cada escena debe especificar encuadre/movimiento de cámara, luz, audio/ambiente y transición hacia la siguiente.
 - Evita saltos ilógicos, teletransportes, objetos que aparecen/desaparecen y cambios de escenario sin transición explicada.
-- Estilo: ${style}. Densidad visual: ${density === "high" ? "ALTA: composición rica, escenarios detallados, varios planos de profundidad y actividad ambiental sin saturar la acción principal" : "MEDIA: entorno detallado y legible"}.
+- Estilo: ${style}. Densidad visual: ${density === "high" ? "DETALLE ALTO: más elementos ambientales y profundidad, siempre ordenados y sin saturar" : "EQUILIBRADA: diseño sencillo, limpio y completo, con pocos detalles relevantes y fondo reconocible; nunca vacío"}.
 - Revisa cada escena como control de calidad. Si una escena es floja, confusa, vacía o rompe continuidad, REESCRÍBELA antes de responder. No incluyas escenas rechazadas en la versión final. El reporte debe reflejar solo escenas finales aprobadas.
 - Nada de relleno verbal. Sé específico y producible.
 PREMISA: ${idea}
