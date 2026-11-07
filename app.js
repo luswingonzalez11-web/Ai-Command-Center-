@@ -2,7 +2,7 @@
 const API_BASE = "https://jarvis-core-wvls.onrender.com";
 
 // JARVIS CORE release/update monitor. Bump this together with version.json on each release.
-const APP_BUILD_VERSION = "2.5.0";
+const APP_BUILD_VERSION = "2.7.0";
 const RELEASE_MANIFEST_URL = "https://raw.githubusercontent.com/luswingonzalez11-web/Ai-Command-Center-/feature/ai-task-video-studio/version.json";
 
 let jarvisUpdateStatus = "checking";
@@ -93,8 +93,9 @@ const modules = [
   ["memory", "▤", "Memoria"],
   ["settings", "⚙", "Sistema"],
   ["connections", "⌘", "Conexiones"],
-  ["performance", "◷", "Rendimiento"]
-];
+  ["performance", "◷", "Rendimiento"],
+  ["access", "⌑", "Accesos"]
+].filter(item => !window.JARVIS_GUEST_MODE || item[0] === "ai");
 
 const NOTIFICATION_KEY = "jarvis_notifications_v1";
 let notifications = [];
@@ -127,8 +128,8 @@ const agents = [
   ["Grok", "Evaluador crítico", "grok"]
 ];
 
-let active = "core";
-const CHAT_HISTORY_KEY = "jarvis_chat_history_v1";
+let active = window.JARVIS_GUEST_MODE ? "ai" : "core";
+const CHAT_HISTORY_KEY = window.JARVIS_GUEST_MODE ? "jarvis_chat_history_guest_" + String(window.JARVIS_ACCESS_TOKEN || "").slice(0,16) : "jarvis_chat_history_v1";
 let messages = [];
 try {
   const storedChat = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
@@ -376,6 +377,8 @@ function render() {
       </div>
     `;
 
+  } else if (active === "access") {
+    html = '<div class="card"><div class="eyebrow">SECURITY / INVITATION CONTROL</div><h2>Accesos privados</h2><p class="muted">JARVIS genera códigos únicos de un solo uso. Cada código vence en 10 minutos. Los invitados solo pueden utilizar el chat y no tienen acceso a los controles administrativos.</p><div class="row"><strong>Solicitudes y códigos</strong><span class="pill" id="accessUnreadCount">Cargando...</span></div><div id="accessRequests" class="list"><div class="empty">Consultando...</div></div><button class="btn" id="refreshAccessRequests">Actualizar solicitudes</button></div>';
   } else if (active === "board") {
     html = `
       <div class="card">
@@ -525,6 +528,11 @@ function render() {
   $("#content").innerHTML = intro + html + `
     <div class="footer">JARVIS CORE · MULTI-AGENT INTELLIGENCE SYSTEM</div>
   `;
+
+  if (active === "access") {
+    window.jarvisLoadAccessRequests?.();
+    $("#refreshAccessRequests")?.addEventListener("click", () => window.jarvisLoadAccessRequests?.());
+  }
 
   const send = $("#send");
   if (send) send.onclick = sendChat;

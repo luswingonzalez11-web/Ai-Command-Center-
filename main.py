@@ -10,12 +10,15 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from studio_api import router as studio_router, VideoAnimateRequest, animate_from_description
 from ops_api import router as ops_router
 
 load_dotenv()
+
+from access_security import router as access_router, is_valid_guest_session, consume_guest_chat_request
 
 BASE = Path(__file__).resolve().parent
 DB = BASE / "jarvis.db"
@@ -34,11 +37,34 @@ GITHUB_API = "https://api.github.com"
 
 app = FastAPI(
     title="JARVIS CORE API",
-    version="4.2.0"
+    version="4.3.0"
 )
 
 app.include_router(studio_router)
 app.include_router(ops_router)
+app.include_router(access_router)
+
+
+@app.middleware("http")
+async def access_guard(request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/health" or path.startswith("/api/access/") or request.method == "OPTIONS":
+        return await call_next(request)
+    expected = os.getenv("JARVIS_ADMIN_TOKEN", "")
+    admin_token = request.headers.get("x-jarvis-admin-token", "")
+    if expected and admin_token and secrets.compare_digest(admin_token, expected):
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    guest_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    if guest_token and await is_valid_guest_session(guest_token):
+        if path == "/api/chat" and request.method == "POST":
+            if not await consume_guest_chat_request(guest_token):
+                return JSONResponse(status_code=429, content={"detail": "Límite de invitado alcanzado: máximo 50 mensajes al día y 2 segundos entre mensajes."})
+            return await call_next(request)
+        if path == "/api/providers" and request.method == "GET":
+            return await call_next(request)
+        return JSONResponse(status_code=403, content={"detail": "Este espacio invitado solo tiene acceso al chat. Los controles administrativos son privados."})
+    return JSONResponse(status_code=401, content={"detail": "Acceso privado. Solicita un código de JARVIS CORE."})
 
 origin = os.getenv("CORS_ORIGIN", "*")
 
